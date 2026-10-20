@@ -64,6 +64,7 @@ var execFn = execFile;
 var killFn = function (pid) { process.kill(pid, 'SIGTERM'); };
 var blankWanted = function () { return false; };
 var blockFirst = function () { return false; };
+var restartAllowed = function () { return false; };
 
 function init(opts) {
   opts = opts || {};
@@ -80,6 +81,7 @@ function init(opts) {
   if (opts.kill) killFn = opts.kill;
   if (opts.blankAtStart) blankWanted = opts.blankAtStart;
   if (opts.blockFirst) blockFirst = opts.blockFirst;
+  if (opts.restartSam) restartAllowed = opts.restartSam;
 }
 
 function luna(uri, payload, cb) {
@@ -298,7 +300,9 @@ function samHasManifest(cb) {
 /*
  * sam reads the directory again and reports the type wanted. webOS 10 and 11
  * ignore the nudge, which costs its 8 s of polls before the block and release
- * there, so they go to the block and release first.
+ * there, so they go to the block and release first. Where neither takes and
+ * the caller allows it (webOS 6 to 8: a C1 on 6.5.3 has neither), sam is
+ * restarted.
  */
 function reread(wantWeb, cb, check) {
   if (!samrescan) return cb(false);
@@ -313,7 +317,10 @@ function reread(wantWeb, cb, check) {
   }
   call(first, function (ok) {
     if (ok) return cb(true);
-    call(then, cb);
+    call(then, function (reread) {
+      if (reread || !restartAllowed() || !samrescan.restart) return cb(reread);
+      samrescan.restart(check, cb);
+    });
   });
 }
 
@@ -419,8 +426,12 @@ function release(cb) {
   });
 }
 
+// Where sam is restarted when neither the nudge nor the block and release take.
+function restartsSam(webosVersion) { return /^[678]\./.test(String(webosVersion || '')); }
+
 module.exports = {
   LG_HOME: LG_HOME,
+  restartsSam: restartsSam,
   init: init,
   stage: stage,
   mounted: mounted,
@@ -443,9 +454,11 @@ if (require.main === module && process.argv[2] === '--release') {
   var rescan = require('./samrescan');
   var remoteKeys = require('./remotekeys');
   var releaseStateDir = path.join(__dirname, '..');
+  var releaseWebos = require('./util').detectWebosVersion() || '';
   rescan.init({ luna: lunaTransport.call });
   remoteKeys.init({ luna: lunaTransport.call, stateDir: releaseStateDir });
-  init({ luna: lunaTransport.call, samrescan: rescan, stageDir: path.join(releaseStateDir, 'home-takeover') });
+  init({ luna: lunaTransport.call, samrescan: rescan, stageDir: path.join(releaseStateDir, 'home-takeover'),
+         restartSam: function () { return restartsSam(releaseWebos); } });
   remoteKeys.setStarting('', function (keys) {
     function finish(r) {
       if (!keys || !keys.ok) r = { ok: false, error: 'the Home key\'s starting notice could not be cleared' };

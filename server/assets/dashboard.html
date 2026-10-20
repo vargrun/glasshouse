@@ -848,12 +848,19 @@ function homeRows(d) {
   homeData = d;
   var r = [head(t('home.title', 'Glasshouse Home'))];
   if (!d || d.ok === false || !d.supported) return r;
+  var can = d.writable !== false;
+  if (d.supported.beta === true) {
+    r.push({ label: t('home.beta', 'Beta on this TV'),
+             value: d.beta ? t('common.on', 'On') : t('common.off', 'Off'), cls: d.beta ? 'on' : 'off',
+             act: can ? 'homeBeta' : null, on: !!d.beta,
+             press: d.beta ? t('tv.press.switchOff', 'Press OK to switch off') : t('tv.home.beta.on', 'Press OK, then again, to switch on'),
+             hint: t('home.betaDesc', 'Glasshouse Home has not been tried on this TV\u2019s webOS version. The beta offers it here. Switching the beta off puts LG\u2019s Home back at once, as does Use LG Home.') });
+  }
   if (!d.supported.ok && !d.enabled && !d.restorePending) {
     r.push({ label: t('home.unavailable', 'Not available on this TV'), value: '',
              hint: d.supported.reason || '' });
     return r;
   }
-  var can = d.writable !== false;
   r.push({ label: d.restorePending ? t('home.retryRestore', 'Retry restoring LG Home') : t('home.title', 'Glasshouse Home'),
            value: d.restorePending ? t('home.restorePending', 'LG Home restoration is incomplete') : d.enabled ? t('common.on', 'On') : t('common.off', 'Off'), cls: d.enabled ? 'on' : 'off',
            act: can ? 'homeSwitch' : null, on: d.enabled || d.restorePending,
@@ -889,6 +896,14 @@ function homeRows(d) {
                press: t('tv.home.colours.press', 'Press OK for {name}', { name: lookNames[nextLook.id] || nextLook.id }),
                hint: t('home.colours.tvHint', 'The text and accent on Glasshouse Home. Any colour can be picked on the browser dashboard’s Home tab.') });
     }
+    // OK steps from the default through the presets; a format typed on the browser dashboard shows as it is.
+    var dates = [null].concat(d.datePresets || []), dateAt = dates.indexOf(d.layout.dateFormat || null);
+    var nextDate = dates[(dateAt + 1) % dates.length];
+    r.push({ label: t('home.dateFormat.title', 'Date'),
+             value: d.layout.dateFormat || t('home.dateFormat.default', 'Default'), cls: 'act',
+             act: can ? 'homeDateFormat' : null, key: nextDate,
+             press: t('tv.home.dateFormat.press', 'Press OK for {name}', { name: nextDate || t('home.dateFormat.default', 'Default') }),
+             hint: t('home.dateFormat.tvHint', 'How the date under the clock is written. Any format can be typed on the browser dashboard’s Home tab.') });
   }
   // Opening Home opens Glasshouse Home only while it has LG's Home's place.
   if (d.enabled && d.active) {
@@ -2453,11 +2468,19 @@ function activate() {
       render();
       return sendPost('/api/home/start-layout', { hideLgHomeAtStart: !r.on },
                       r.on ? t('tv.flash.switchedOff', 'Switched off') : t('tv.flash.switchedOn', 'Switched on'));
+    case 'homeBeta':
+      if (!r.on && confirmFirst(r, t('home.betaConfirm', 'Press again to switch on'))) return;
+      r.value = t('apps.service.updating', 'Updating\u2026');
+      render();
+      return sendPost('/api/home/beta', { allow: !r.on },
+                      r.on ? t('tv.home.off', 'LG\u2019s Home is the TV\u2019s Home again') : t('tv.flash.switchedOn', 'Switched on'));
     case 'homePicture':
       return homeLayout({ picture: !r.on });
     case 'homeColours':
       // The first preset is the view's own colours, saved as none chosen.
       return homeLayout({ colours: r.key.id === homeData.colourPresets[0].id ? null : { text: r.key.text, accent: r.key.accent } });
+    case 'homeDateFormat':
+      return homeLayout({ dateFormat: r.key });
     case 'homeOpen':
       return send({ action: 'launchApp', value: 'com.webos.app.home' });
     case 'homeRowUp':

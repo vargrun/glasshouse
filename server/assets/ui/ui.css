@@ -1450,6 +1450,9 @@ button.home-look:active{background:none}
 .home-custom{display:flex;align-items:center;flex-wrap:wrap;gap:14px;margin:4px 0 8px}
 .home-custom label{display:flex;align-items:center;gap:8px}
 .home-custom input[type=color]{width:40px;height:28px;padding:0;border:1px solid var(--edge);border-radius:6px;background:none}
+.home-date-presets{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 10px}
+.home-date-form{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:4px 0 6px}
+.home-date-form input{flex:1 1 220px;max-width:320px;min-width:0;padding:8px 10px;background:transparent;color:inherit;border:1px solid var(--edge);border-radius:6px;font-family:inherit}
 .home-wall-empty{aspect-ratio:16/9;display:grid;place-items:center;background:#000;color:#999;border-radius:6px}
 
 /* Cross-panel search: opened from the sidebar or keyboard, so it does not

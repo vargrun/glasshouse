@@ -4,7 +4,7 @@ let homeStatus = null;
 let homeCat = null;      // what the TV's Home lists: apps, devices, picked channels, order
 let homeLayout = null;
 let homeChannels = null; // the TV's whole channel list, for picking
-let homeArmed = null;    // the control waiting for its second press: 'on', 'off' or 'hide'
+let homeArmed = null;    // the control waiting for its second press: 'on', 'off', 'hide' or 'beta'
 let homeArmTimer = null;
 let homeSaving = false;
 let homeLoadRevision = 0;
@@ -87,6 +87,17 @@ function renderHome() {
     state.textContent = t('home.isOff', 'LG’s Home is the TV’s Home');
     desc.textContent = t('home.isOffDesc', 'Nothing of LG’s is changed: Glasshouse Home is laid over LG’s Home while on, and switching off takes it away.');
   }
+  const betaRow = q('home-beta-row');
+  if (betaRow) betaRow.hidden = st.supported.beta !== true;
+  const beta = q('home-beta');
+  if (beta) {
+    const armed = homeArmed === 'beta';
+    updateToggle(beta, {
+      cls: armed ? 'warn' : st.beta ? 'good' : 'idle',
+      label: armed ? t('home.betaConfirm', 'Press again to switch on') : st.beta ? t('common.on', 'On') : t('common.off', 'Off')
+    });
+    beta.disabled = homeSaving || st.writable === false;
+  }
   const more = q('home-more');
   if (more) more.hidden = !st.supported.ok;
   const hideRow = q('home-hide-lg-row');
@@ -124,6 +135,7 @@ function renderHome() {
   renderHomeChannels();
   renderHomeWalls();
   renderHomeColours();
+  renderHomeDate();
   q('home-reset').disabled = !homeWritable();
 }
 
@@ -166,6 +178,51 @@ function renderHomeColours() {
   [text, accent].forEach(el => { if (el) el.disabled = !can; });
   const reset = q('home-col-reset');
   if (reset) reset.disabled = !can || !(homeLayout && homeLayout.colours);
+}
+
+// A date format filled in as Glasshouse Home fills it, with this browser's names for the preview.
+function homeDateText(format, d) {
+  const names = { '{weekday}': d.toLocaleDateString(undefined, { weekday: 'long' }), '{day}': d.getDate(),
+    '{month:no}': d.getMonth() + 1, '{month:str}': d.toLocaleDateString(undefined, { month: 'long' }), '{year}': d.getFullYear() };
+  return format.replace(/\{[^{}]*\}/g, token => names[token] === undefined ? token : String(names[token]));
+}
+
+// The presets as buttons showing today's date in each; the field keeps what is being typed.
+function renderHomeDate() {
+  const box = q('home-date-presets');
+  if (!box || !homeStatus) return;
+  const now = (homeLayout && homeLayout.dateFormat) || null;
+  const can = homeWritable() && !homeSaving;
+  const today = new Date();
+  const presets = [null].concat(homeStatus.datePresets || []);
+  box.innerHTML = presets.map((f, i) => `<button type="button" class="pill${f === now ? ' good' : ' idle'}" aria-pressed="${f === now}"
+      onclick="homeDatePreset(${i})" ${can ? '' : 'disabled'}>${esc(f ? homeDateText(f, today) : t('home.dateFormat.default', 'Default'))}</button>`).join('');
+  const field = q('home-date-format');
+  if (field && document.activeElement !== field) field.value = now || '';
+  if (field) {
+    field.disabled = !can;
+    field.placeholder = '{weekday} {day}. {month:str} {year}';
+  }
+  q('home-date-save').disabled = !can;
+  q('home-date-reset').disabled = !can || !now;
+  renderHomeDatePreview();
+}
+
+function renderHomeDatePreview() {
+  const field = q('home-date-format'), out = q('home-date-preview');
+  if (!field || !out) return;
+  const f = field.value.trim();
+  out.textContent = f ? t('home.dateFormat.preview', 'Today: {date}', { date: homeDateText(f, new Date()) }) : '';
+}
+
+// 0 is the default; the rest are the server's presets, in its order.
+function homeDatePreset(i) {
+  homeSaveLayout({ dateFormat: i === 0 ? null : homeStatus.datePresets[i - 1] });
+}
+
+function homeSaveDateFormat() {
+  const f = q('home-date-format').value.trim();
+  homeSaveLayout({ dateFormat: f || null });
 }
 
 function homeCustomColours() {
@@ -325,6 +382,27 @@ async function homeHideLg() {
   renderHome();
   try {
     await homePost('/api/home/start-layout', { hideLgHomeAtStart: want });
+  } catch (e) { showErr(e.message); }
+  homeSaving = false;
+  loadHome();
+}
+
+// Switching the beta on takes a second press; off puts LG's Home back, so it needs none.
+async function homeBeta() {
+  if (homeSaving || homeStatus.writable === false) return;
+  const want = !homeStatus.beta;
+  if (want && homeArmed !== 'beta') {
+    homeArmed = 'beta';
+    clearTimeout(homeArmTimer);
+    homeArmTimer = setTimeout(() => { homeArmed = null; renderHome(); }, 5000);
+    return renderHome();
+  }
+  homeArmed = null;
+  clearTimeout(homeArmTimer);
+  homeSaving = true;
+  renderHome();
+  try {
+    await homePost('/api/home/beta', { allow: want });
   } catch (e) { showErr(e.message); }
   homeSaving = false;
   loadHome();

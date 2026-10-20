@@ -89,6 +89,16 @@ var COLOUR_PRESETS = [
 ];
 var COLOUR_RE = /^#[0-9a-f]{6}$/;
 
+/*
+ * The date under the clock: text with placeholders, or null for the
+ * translation's own order of the weekday, day and month. The TV app steps
+ * through the presets; the browser dashboard takes any format.
+ */
+var DATE_TOKENS = ['{weekday}', '{day}', '{month:no}', '{month:str}', '{year}'];
+var DATE_FORMAT_MAX = 40;
+var DATE_PRESETS = ['{weekday} {day}. {month:str}', '{day}. {month:str} {year}', '{weekday}, {day}.{month:no}.{year}',
+                    '{day}.{month:no}.{year}'];
+
 // The settings earlier builds changed, as their snapshot kept them.
 var LEGACY_INPUT_KEYS = ['lastInputApp', 'physicalLastInputApp'];
 
@@ -207,6 +217,7 @@ function defaults() {
     picture: false,
     // { text, accent } as #rrggbb, or null for the view's own colours.
     colours: null,
+    dateFormat: null,
     // null until chosen: the first start keeps an empty layout an earlier build left.
     hideLgHomeAtStart: null,
     // LG's Home auto launch as it was before Glasshouse Home switched it off,
@@ -250,6 +261,7 @@ function normalise(raw) {
   d.hintSeen = raw.hintSeen === true;
   d.picture = raw.picture === true;
   d.colours = validColours(raw.colours);
+  d.dateFormat = validDateFormat(raw.dateFormat);
   if (typeof raw.hideLgHomeAtStart === 'boolean') d.hideLgHomeAtStart = raw.hideLgHomeAtStart;
   if (typeof raw.lgAutoLaunch === 'string' && raw.lgAutoLaunch) d.lgAutoLaunch = raw.lgAutoLaunch;
   if (typeof raw.lgAutoLaunchCheck === 'string' && raw.lgAutoLaunchCheck) d.lgAutoLaunchCheck = raw.lgAutoLaunchCheck;
@@ -261,6 +273,15 @@ function validColours(v) {
   if (!v || typeof v.text !== 'string' || typeof v.accent !== 'string') return null;
   var text = v.text.toLowerCase(), accent = v.accent.toLowerCase();
   return COLOUR_RE.test(text) && COLOUR_RE.test(accent) ? { text: text, accent: accent } : null;
+}
+
+// A format of at most DATE_FORMAT_MAX characters whose braces are all placeholders, or null.
+function validDateFormat(v) {
+  if (typeof v !== 'string') return null;
+  var f = v.trim();
+  if (!f || f.length > DATE_FORMAT_MAX) return null;
+  var rest = f.replace(/\{[^{}]*\}/g, function (token) { return DATE_TOKENS.indexOf(token) === -1 ? '{' : ''; });
+  return /[{}]/.test(rest) ? null : f;
 }
 
 function validSnapshot(s) {
@@ -337,6 +358,10 @@ function perRow(sent, kept) {
 function setLayout(body, cb) {
   var c = readConfig();
   if (!body || typeof body !== 'object') return cb({ ok: false, error: 'layout expected' });
+  if (body.dateFormat !== undefined && body.dateFormat !== null && validDateFormat(body.dateFormat) === null) {
+    return cb({ ok: false, error: msg('srv.home.dateFormat', 'The date format can be up to {max} characters, with {tokens} in braces.',
+      { max: DATE_FORMAT_MAX, tokens: DATE_TOKENS.join(' ') }) });
+  }
   var next = normalise({
     enabled: c.enabled,
     restorePending: c.restorePending,
@@ -354,7 +379,9 @@ function setLayout(body, cb) {
     hintSeen: body.hintSeen !== undefined ? body.hintSeen : c.hintSeen,
     picture: typeof body.picture === 'boolean' ? body.picture : c.picture,
     // null puts the view's own colours back.
-    colours: body.colours !== undefined ? body.colours : c.colours
+    colours: body.colours !== undefined ? body.colours : c.colours,
+    // null puts the translation's order back.
+    dateFormat: body.dateFormat !== undefined ? body.dateFormat : c.dateFormat
   });
   if (body.reset === true) {
     var d = defaults();
@@ -376,7 +403,7 @@ function setLayout(body, cb) {
 
 function layoutOf(c) {
   return { rows: c.rows, order: c.order, sort: c.sort, hidden: c.hidden, channels: c.channels, hintSeen: c.hintSeen, picture: c.picture,
-    colours: c.colours };
+    colours: c.colours, dateFormat: c.dateFormat };
 }
 
 // ---------------------------------------------------------------- what it shows
@@ -834,9 +861,17 @@ function switchTo(on, cb) {
 
 // ---------------------------------------------------------------- settings
 
+/*
+ * A key the TV does not have is left out of the answer rather than failing the
+ * read. A C1 (webOS 6.5.3) has no defaultApps: asked for it with lastInputApp,
+ * it answers returnValue false, errorKey ["defaultApps"] and the settings it
+ * has; asked for it alone, "There is no matched result from DB".
+ */
 function readSettings(keys, cb) {
   luna(SETTINGS + 'getSystemSettings', { category: 'general', keys: keys }, function (r) {
-    cb(r && r.returnValue !== false && r.settings ? r.settings : null);
+    if (r && r.settings && (r.returnValue !== false || isArray(r.errorKey))) return cb(r.settings);
+    if (r && r.returnValue === false && /no matched result/i.test(String(r.errorText || ''))) return cb({});
+    cb(null);
   });
 }
 
@@ -874,8 +909,20 @@ function supported() {
     reason: msg('srv.home.port', 'Glasshouse Home requires the dashboard to use port 8080.') };
   if (/^9\./.test(v)) return { ok: true, webos: v };
   // LG's Home is a Flutter app there, under the same id and folder (#612).
-  // Tried on a G5 (webOS 10.3.1); webOS 11 is untried and needs the setting.
-  if (/^10\./.test(v) || (/^11\./.test(v) && allowExperimentalFn())) return { ok: true, webos: v, experimental: true };
+  // Tried on a G5 (webOS 10.3.1).
+  if (/^10\./.test(v)) return { ok: true, webos: v, experimental: true };
+  /*
+   * Untried, and offered once the owner switches the beta on. webOS 6 to 8
+   * have LG's Home as an app under the same id, a QML one with code for webOS 8
+   * in webOS 9's (TV-RESEARCH); webOS 11's is Flutter, as on webOS 10. webOS 3
+   * to 5 have no such app to take the place of: Home is surface-manager's
+   * ribbon there.
+   */
+  if (/^([678]|11)\./.test(v)) {
+    if (allowExperimentalFn()) return { ok: true, webos: v, experimental: true, beta: true };
+    return { ok: false, webos: v, beta: true,
+      reason: msg('srv.home.beta', 'Glasshouse Home has not been tried on webOS {version}. Switching on the beta offers it.', { version: v }) };
+  }
   return {
     ok: false, webos: v || null,
     reason: msg('srv.home.untested', 'Glasshouse Home has been tried only on webOS 9 and 10. This TV runs webOS {version}.', { version: v || '?' })
@@ -1360,8 +1407,10 @@ function status(cb) {
     cb({
       ok: true,
       // Both dashboards leave Home out where it is false, as for other features a TV lacks.
-      available: sup.ok || c.enabled || c.restorePending,
+      available: sup.ok || sup.beta === true || c.enabled || c.restorePending,
       supported: sup,
+      // On a TV it is offered on as a beta: whether the owner has switched that on.
+      beta: sup.beta === true ? allowExperimentalFn() : null,
       enabled: c.enabled,
       restorePending: c.restorePending,
       // In LG's Home's place now; false while one of the ways back has LG's Home open.
@@ -1372,6 +1421,7 @@ function status(cb) {
       history: !!(historyModule && historyModule.enabled && historyModule.enabled()),
       wallpapers: wallpapers.status(),
       colourPresets: COLOUR_PRESETS,
+      datePresets: DATE_PRESETS,
       layout: layoutOf(c)
     });
   });
@@ -1403,7 +1453,8 @@ function init(opts) {
     exec: opts.exec,
     kill: opts.kill,
     blankAtStart: function () { return startLayoutAvailable() && readConfig().hideLgHomeAtStart === true; },
-    blockFirst: function () { return /^1[01]\./.test(String(webosVersion || '')); }
+    blockFirst: function () { return /^1[01]\./.test(String(webosVersion || '')); },
+    restartSam: function () { return takeover.restartsSam(webosVersion); }
   });
   webosVersion = opts.webosVersion || null;
   serverPort = opts.port === undefined ? 8080 : Number(opts.port);
@@ -1503,6 +1554,21 @@ function start() {
   });
 }
 
+/*
+ * Called once allowExperimentalHome has been saved. Switched off where that is
+ * what offered Glasshouse Home, LG's Home is given its place back at once
+ * rather than at the next start.
+ */
+function betaChanged(cb) {
+  var c = readConfig();
+  if (supported().ok || !(c.enabled || c.restorePending || takeover.mounted())) return cb({ ok: true });
+  console.log('home: the beta switched off; LG\'s Home put back');
+  disable(function (r) {
+    homeKeysFn(false);
+    cb(r);
+  });
+}
+
 function stop() {
   cancelWake();
   stopBeatWatch();
@@ -1528,6 +1594,7 @@ module.exports = {
   setLayout: function (body, cb) { change(function (done) { setLayout(body, done); }, cb); },
   setHideLgHomeAtStart: function (body, cb) { change(function (done) { setHideLgHomeAtStart(body, done); }, cb); },
   enable: function (cb) { change(function (done) { enable(function (r) { if (r.ok) homeKeysFn(true); done(r); }); }, cb); },
+  betaChanged: function (cb) { change(betaChanged, cb); },
   disable: function (cb) { change(function (done) { disable(function (r) { homeKeysFn(false); done(r); }); }, cb); },
   uninstall: function (cb) { change(uninstall, cb); },
   beat: beat,
@@ -1562,7 +1629,9 @@ if (require.main === module && process.argv[2] === '--restore') {
   var restoreStateDir = path.join(__dirname, '..');
   rescan.init({ luna: lunaTransport.call });
   remoteKeys.init({ luna: lunaTransport.call, stateDir: restoreStateDir });
-  init({ luna: lunaTransport.call, samrescan: rescan, stateDir: restoreStateDir, webosVersion: '9',
+  // The TV's own version, so that webOS 6 to 8 restart sam to read LG's Home again.
+  init({ luna: lunaTransport.call, samrescan: rescan, stateDir: restoreStateDir,
+    webosVersion: require('./util').detectWebosVersion() || '9',
     setStarting: remoteKeys.setStarting, setHomeKey: remoteKeys.setHome, homeKeyApp: remoteKeys.homeApp });
   disable(function (r) {
     console.log(r.ok ? 'home: LG\'s Home restored' : 'home: ' + r.error);

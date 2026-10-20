@@ -972,6 +972,13 @@
 <section class="priv panel" id="homepane" role="tabpanel" hidden>
   <div class="pv-note warn" data-t="home.experimental">Experimental. Glasshouse Home replaces LG's Home screen with Glasshouse's own. It has been tried on webOS 9 only. In the first half minute after the TV starts from cold, Home shows a message that Glasshouse Home is starting.</div>
   <div class="prot-table">
+    <div class="prot-row" id="home-beta-row" hidden>
+      <div class="prot-main">
+        <div class="prot-title" data-t="home.beta">Beta on this TV</div>
+        <div class="prot-desc" data-t="home.betaDesc">Glasshouse Home has not been tried on this TV&rsquo;s webOS version. The beta offers it here. Switching the beta off puts LG&rsquo;s Home back at once, as does Use LG Home.</div>
+      </div>
+      <div class="prot-status"><button type="button" class="pill idle" id="home-beta" onclick="homeBeta()">&mdash;</button></div>
+    </div>
     <div class="prot-row">
       <div class="prot-main">
         <div class="prot-title" id="home-state">&mdash;</div>
@@ -1011,6 +1018,16 @@
     <label><input type="color" id="home-col-accent" onchange="homeCustomColours()"> <span data-t="home.colours.accent">Accent</span></label>
     <button type="button" id="home-col-reset" onclick="homeSaveLayout({ colours: null })" data-t="home.colours.reset">Use the default colours</button>
   </div>
+
+  <div class="grp grp-sec" data-t="home.dateFormat.title">Date</div>
+  <div class="sub" data-t="home.dateFormat.desc">How the date under the clock is written. In braces: {weekday} for the day&rsquo;s name, {day}, {month:no} for the month&rsquo;s number, {month:str} for its name, and {year}. Names are in the TV&rsquo;s language.</div>
+  <div class="home-date-presets" id="home-date-presets"></div>
+  <form class="home-date-form" onsubmit="event.preventDefault(); homeSaveDateFormat()">
+    <input type="text" id="home-date-format" maxlength="40" spellcheck="false" autocomplete="off" oninput="renderHomeDatePreview()" aria-label="Date format" data-t-aria-label="home.dateFormat.label">
+    <button type="submit" id="home-date-save" data-t="home.dateFormat.save">Save</button>
+    <button type="button" id="home-date-reset" onclick="homeSaveLayout({ dateFormat: null })" data-t="home.dateFormat.reset">Use the default</button>
+  </form>
+  <div class="sub" id="home-date-preview"></div>
 
   <div class="grp grp-sec" data-t="home.wall.title">Wallpaper</div>
   <div class="sub" data-t="home.wall.optional">Optional: upload an image for each time of day. A time of day without one has a black background.</div>

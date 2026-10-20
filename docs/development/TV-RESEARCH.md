@@ -991,6 +991,34 @@ The webOS 9 entries above describe the home app's CRIU checkpoint. On a CX:
   permissions, and its luna calls never reach the bus, so a separate app
   cannot stand in for Home.
 
+## Glasshouse Home on webOS 6 (C1, webOS 6.5.3)
+
+Checked on 20 October 2026 on an OLED55C11LB, firmware 03.53.45.
+
+- LG's Home is `com.webos.app.home`, a native app run as
+  `/usr/bin/com.webos.app.home`, as on webOS 9.
+- configd answers `getConfigs` for `profile.blockedAppList` with
+  `missingConfigs`, so sam cannot be nudged, and sam answers
+  `blockSystemApp` and `releaseBlockSystemApp` with `Unknown method`. Its
+  schemas in `/etc/palm/schemas/sam/` name no call that makes it read an
+  app again.
+- With Glasshouse Home's app bind-mounted over LG's directory, a sam restart
+  (`systemctl kill -s 9 sam.service`, start limits cleared first) had sam
+  report it as `type: web` within 3 s. LG's Home process went with the
+  restart, eim kept running, and Home and Back opened Glasshouse Home.
+- With the TV in `bs-Latn-BA`, Glasshouse Home's `toLocaleDateString` gave
+  ICU's root names, "Tue" and "M10". The web engine's ICU 64 data
+  (`/usr/lib/cbe/icudtl.dat`) has `bs.res` but no `bs_Latn.res`;
+  `sr_Latn_BA.res`, `hr_BA.res` and `en.res` are there.
+- A `luna-send -i` subscription to `applicationManager/getForegroundAppInfo`
+  answered a sam restart with one reply, `"errorText":
+  "com.webos.applicationManager is not running."`, and then stayed running
+  with nothing more, the app reopened after the restart included.
+- The settings service has no `defaultApps` in `general`. Asked for it with
+  `lastInputApp` and `physicalLastInputApp`, `getSystemSettings` answers
+  `returnValue: false` with `errorKey: ["defaultApps"]` and the two it has;
+  asked for it alone, `"There is no matched result from DB"`.
+
 ## Glasshouse Home on webOS 10 (G5, webOS 10.3.1)
 
 - LG's Home's `appinfo.json` declares `"appCategory": ["home"]`. sam answers

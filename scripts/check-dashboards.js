@@ -279,6 +279,45 @@ async function visitHomeColours(browser, base, problems) {
   } finally { await page.close(); }
 }
 
+// The date under the clock from the layout's format, and the translation's order once it is cleared.
+async function visitHomeDate(browser, base, problems) {
+  const page = await browser.newPage({ locale: 'en-GB' });
+  page.on('pageerror', e => problems.push('Home date: ' + e.message));
+  const layout = { rows: ['app', 'dev', 'ch'], order: { app: [], dev: [], ch: [] },
+    hidden: { app: [], dev: [], ch: [] }, channels: [], hintSeen: true, colours: null, dateFormat: '{day}. {month:str} {year}' };
+  let version = 1;
+  await page.route('**/api/home/**', route => {
+    const pathname = new URL(route.request().url()).pathname;
+    const body = pathname === '/api/home/catalogue'
+      ? { ok: true, layout, layoutVersion: String(version), apps: [], devices: [], channels: [],
+          sources: { channels: 0 }, order: { app: ['lg-home'], dev: [], ch: [] } }
+      : { ok: true, build: 'one', layoutVersion: String(version) };
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
+  });
+  const shows = async expected => {
+    try {
+      await page.waitForFunction(text => document.getElementById('date').textContent === text, expected, { timeout: 4000 });
+    } catch (e) {
+      problems.push('Home date: expected "' + expected + '", saw "' + await page.locator('#date').textContent() + '"');
+    }
+  };
+  try {
+    await page.clock.install({ time: new Date(2026, 9, 20, 12, 0) });
+    await page.goto(base + '/assets/home.html');
+    await page.waitForSelector('.tile');
+    await shows('20. October 2026');
+    // Changes made elsewhere arrive through the heartbeat.
+    layout.dateFormat = '{weekday}, {day}.{month:no}.{year}';
+    version++;
+    await page.clock.fastForward(20000);
+    await shows('Tuesday, 20.10.2026');
+    layout.dateFormat = null;
+    version++;
+    await page.clock.fastForward(20000);
+    await shows('Tuesday 20 October');
+  } finally { await page.close(); }
+}
+
 async function visitHomeArrangement(browser, base, problems) {
   const page = await browser.newPage();
   page.on('pageerror', e => problems.push('Home arranging: ' + e.message));
@@ -764,6 +803,7 @@ async function visitHomeRecents(browser, base, problems) {
   await visitHomeArrangement(browser, base, problems);
   await visitHomePicture(browser, base, problems);
   await visitHomeColours(browser, base, problems);
+  await visitHomeDate(browser, base, problems);
   await visitHomeEditor(browser, base, problems);
   await visitHomeOrder(browser, base, problems);
   await visitHomeUploads(browser, base, problems);
@@ -773,6 +813,6 @@ async function visitHomeRecents(browser, base, problems) {
   await browser.close();
   for (const p of problems) console.log(p);
   console.log((web.length + tv.length) + ' tabs opened (' + web.length + ' web, ' + tv.length + ' TV app), ' +
-              'Home arranging, picture, colours, update, editing, order, uploads, readiness, availability and recents checked, ' + problems.length + ' problem' + (problems.length === 1 ? '' : 's'));
+              'Home arranging, picture, colours, date, update, editing, order, uploads, readiness, availability and recents checked, ' + problems.length + ' problem' + (problems.length === 1 ? '' : 's'));
   process.exit(problems.length ? 1 : 0);
 })().catch(e => { console.error(e.message); process.exit(1); });

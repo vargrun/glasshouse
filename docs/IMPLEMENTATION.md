@@ -1251,7 +1251,7 @@ feature off, or `tvwebctl restore-home` before uninstalling, deletes the webOS
 ## Glasshouse Home
 
 `lib/home.js` runs a home screen of Glasshouse's own in place of LG's, opt-in
-from the dashboard's Home tab (webOS 9; webOS 10 and 11 with `allowExperimentalHome`). The view is `assets/home.html`,
+from the dashboard's Home tab (webOS 9 and 10; webOS 6 to 8 and 11 with `allowExperimentalHome`, the tab's beta switch, which puts LG's Home back when switched off). The view is `assets/home.html`,
 opened by a small web app whose files are `assets/home-app/index.html` and its
 icons.
 
@@ -1271,7 +1271,9 @@ stages it in `/var/lib/tvweb/home-takeover` with an `appinfo.json` naming
 as LG's has it), bind-mounts the directory over
 `/usr/palm/applications/com.webos.app.home`, and has sam read it again
 (`lib/samrescan.js`): with the nudge on webOS 9, and with a block and release
-of the one app on webOS 10, which ignores the nudge. On webOS 10 the Home
+of the one app on webOS 10, which ignores the nudge. webOS 6 to 8 have sam
+restarted where they have neither, as a C1 on webOS 6.5.3 does; webOS 9 and
+later never restart it for Glasshouse Home (#366). On webOS 10 the Home
 button opens the default app of the `home` category, which sam takes from that
 `appCategory`; without it the button does nothing
 ([research](development/TV-RESEARCH.md#glasshouse-home-on-webos-10-g5-webos-1031)).

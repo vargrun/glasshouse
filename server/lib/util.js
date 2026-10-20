@@ -25,6 +25,22 @@ function readTrimmed(filePath) {
   catch (e) { return null; }
 }
 
+/*
+ * The webOS version as the TV reports it: /etc/issue, or on a G5 (webOS
+ * 10.3.1), which has none, "Rockhopper release 10.3.1-3006" in
+ * starfish-release. null where neither says and no SDK version is given.
+ */
+function detectWebosVersion(sdkVersion) {
+  var raw = readTrimmed('/etc/issue') || readTrimmed('/etc/issue.net') || '';
+  var m = raw.match(/webOS(?:\s+TV)?\s+([\d\.]+)/i);
+  if (m) return m[1];
+  var sf = readTrimmed('/etc/starfish-release') || '';
+  var sm = sf.match(/release\s+([\d\.]+)/i);
+  if (sm) return sm[1];
+  if (sdkVersion) return String(sdkVersion);
+  return null;
+}
+
 // The TV's own address on the home network, whatever the server is bound to.
 function lanAddress() {
   var ifaces = {};
@@ -141,6 +157,7 @@ module.exports = {
   toInt: toInt,
   mkdirp: mkdirp,
   readTrimmed: readTrimmed,
+  detectWebosVersion: detectWebosVersion,
   lanAddress: lanAddress,
   monotonicMs: monotonicMs,
   toBuffer: toBuffer,
