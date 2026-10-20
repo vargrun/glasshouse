@@ -1281,6 +1281,56 @@ step('the weather settings change only in the parts sent, and anything unusable 
   });
 });
 
+step('a picture of the day becomes every time of day\'s wallpaper, and the uploads come back with My images', function (done) {
+  var bingDown = false;
+  var fakeGetJson = function (url, cb) {
+    setTimeout(function () {
+      if (bingDown) return cb(new Error('Could not resolve host'));
+      cb(null, { images: [{ urlbase: '/th?id=OHR.Sloth', hsh: 'h1', title: 'Life in the slow lane', copyright: '© Suzi Eszterhas' }] });
+    }, 1);
+  };
+  var fakeDownload = function (url, out, opts, cb) {
+    fs.writeFileSync(out, require('../server/lib/util').toBuffer([0xff, 0xd8, 0xff, 0xe0, 0xff, 0xd9]));
+    setTimeout(function () { cb(null); }, 1);
+  };
+  start(null, { getJson: fakeGetJson, download: fakeDownload });
+  var uploads = path.join(dir, 'home-wallpaper-uploads');
+  fs.mkdirSync(uploads);
+  fs.writeFileSync(path.join(uploads, 'evening.jpg'), 'mine');
+  home.status(function (st0) {
+    assert.strictEqual(st0.wallpapers.source, 'mine');
+    assert.deepEqual(st0.wallpapers.slots, { morning: false, afternoon: false, evening: true, night: false });
+    bingDown = true;
+    home.setWallpapers({ source: 'daily', provider: 'bing' }, function (r0) {
+      assert.strictEqual(r0.ok, false, 'a provider that cannot be reached is not made the source');
+      bingDown = false;
+      home.setWallpapers({ source: 'daily', provider: 'bing' }, function (r) {
+        assert.ok(r.ok, r.error);
+        var w = r.wallpapers;
+        assert.strictEqual(w.source, 'daily');
+        assert.deepEqual(w.slots, { morning: true, afternoon: true, evening: true, night: true }, 'every time of day');
+        assert.strictEqual(w.daily.title, 'Life in the slow lane');
+        assert.ok(/^daily-/.test(w.revision));
+        assert.deepEqual(w.mine.slots, st0.wallpapers.slots, 'the uploads are kept');
+        assert.ok(/wallpaper-a\.jpg$/.test(home.wallpaperImage('morning').file), 'the picture of the day for the view');
+        assert.ok(/evening\.jpg$/.test(home.wallpaperImage('evening', true).file), 'the upload, where asked for');
+        home.setLayout({ hintSeen: true }, function () {
+          home.status(function (st) {
+            assert.strictEqual(st.wallpapers.source, 'daily', 'a layout save keeps the wallpaper\'s source');
+            home.setWallpapers({ source: 'mine' }, function (r4) {
+              assert.ok(r4.ok, r4.error);
+              assert.strictEqual(r4.wallpapers.source, 'mine');
+              assert.deepEqual(r4.wallpapers.slots, st0.wallpapers.slots, 'the uploads are the wallpaper again');
+              assert.ok(/evening\.jpg$/.test(home.wallpaperImage('evening').file));
+              done();
+            });
+          });
+        });
+      });
+    });
+  });
+});
+
 step('a failed save switches nothing', function (done) {
   start(null);
   var blocked = path.join(dir, 'home.json.tmp');

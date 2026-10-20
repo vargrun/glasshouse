@@ -27,7 +27,7 @@ function request(method, url, body, headers, cb) {
   req.end(body || undefined);
 }
 function upload(data, headers, cb) { request('POST', '/api/home/wallpapers/upload?slot=morning', data, headers, cb); }
-function unchanged() { assert.deepEqual(fs.readFileSync(home.wallpaperPath('morning')), jpeg); }
+function unchanged() { assert.deepEqual(fs.readFileSync(home.wallpaperImage('morning').file), jpeg); }
 var steps = [
   function (next) {
     upload(jpeg, {}, function (code, body) {
@@ -104,7 +104,7 @@ var steps = [
     request('POST', '/api/home/wallpapers', new Buffer('{"removeUploads":true}'), { 'Content-Type': 'application/json' }, function (code, body) {
       assert.strictEqual(code, 200);
       assert.strictEqual(JSON.parse(body).wallpapers.available, false);
-      assert.strictEqual(home.wallpaperPath('morning'), null);
+      assert.strictEqual(home.wallpaperImage('morning'), null);
       assert.deepEqual(fs.readdirSync(path.join(dir, 'home-wallpaper-uploads')), []);
       next();
     });

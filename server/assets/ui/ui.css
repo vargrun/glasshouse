@@ -1455,6 +1455,9 @@ button.home-look:active{background:none}
 .home-date-presets .pill{text-transform:none;letter-spacing:0}
 .home-date-form{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:4px 0 6px}
 .home-date-form input{flex:1 1 220px;max-width:320px;min-width:0;padding:8px 10px;background:transparent;color:inherit;border:1px solid var(--edge);border-radius:6px;font-family:inherit}
+.home-wall-pod{margin:14px 0 6px;max-width:560px}
+.home-wall-pod img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:6px;background:#000}
+.home-wall-pod figcaption{margin-top:10px}
 .home-wall-empty{aspect-ratio:16/9;display:grid;place-items:center;background:#000;color:#999;border-radius:6px}
 
 /* Cross-panel search: opened from the sidebar or keyboard, so it does not

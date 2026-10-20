@@ -34,6 +34,10 @@ var takeover = require('./home-takeover');
 var recent = require('./home-recent');
 var recentApps = require('./home-recent-apps');
 var weatherModule = require('./home-weather');
+var daily = require('./home-daily-wallpaper');
+// How often a picture of the day is looked for again: Bing and Wikimedia change once a day.
+var DAILY_CHECK_MS = 60 * 60 * 1000;
+var dailyTimer = null;
 
 // The separate app earlier builds installed: removed, and its settings undone.
 var HOME_APP = 'com.tvweb.home';
@@ -223,6 +227,8 @@ function defaults() {
     weather: weatherModule.validSettings(null),
     // null until chosen: the first start keeps an empty layout an earlier build left.
     hideLgHomeAtStart: null,
+    // The uploaded pictures ('mine') or a picture of the day from a provider (lib/home-daily-wallpaper).
+    wallpaper: { source: 'mine', provider: 'bing' },
     // LG's Home auto launch as it was before Glasshouse Home switched it off,
     // null while it has not, and LG's mark of whether the owner chose it.
     lgAutoLaunch: null,
@@ -266,6 +272,8 @@ function normalise(raw) {
   d.colours = validColours(raw.colours);
   d.dateFormat = validDateFormat(raw.dateFormat);
   d.weather = weatherModule.validSettings(raw.weather);
+  var wp = raw.wallpaper && typeof raw.wallpaper === 'object' ? raw.wallpaper : {};
+  d.wallpaper = { source: wp.source === 'daily' ? 'daily' : 'mine', provider: daily.validProvider(wp.provider) || 'bing' };
   if (typeof raw.hideLgHomeAtStart === 'boolean') d.hideLgHomeAtStart = raw.hideLgHomeAtStart;
   if (typeof raw.lgAutoLaunch === 'string' && raw.lgAutoLaunch) d.lgAutoLaunch = raw.lgAutoLaunch;
   if (typeof raw.lgAutoLaunchCheck === 'string' && raw.lgAutoLaunchCheck) d.lgAutoLaunchCheck = raw.lgAutoLaunchCheck;
@@ -373,6 +381,8 @@ function setLayout(body, cb) {
     hideLgHomeAtStart: c.hideLgHomeAtStart,
     lgAutoLaunch: c.lgAutoLaunch,
     lgAutoLaunchCheck: c.lgAutoLaunchCheck,
+    // Set through setWallpapers, not the layout.
+    wallpaper: c.wallpaper,
     rows: body.rows !== undefined ? body.rows : c.rows,
     order: perRow(body.order, c.order),
     sort: perRow(body.sort, c.sort),
@@ -969,6 +979,7 @@ function enable(cb) {
     syncLgAutoLaunch();
     if (viewInFront() && powerActive) watchBeat(FIRST_BEAT_GRACE_MS);
     console.log('home: Glasshouse Home switched on');
+    checkDaily();
     cb({ ok: true });
   });
 }
@@ -1308,7 +1319,7 @@ function watchBeat(ms) {
 function beat() {
   lastBeatAt = nowMs();
   if (viewInFront()) watchBeat(BEAT_GRACE_MS);
-  return { ok: true, enabled: readConfig().enabled, build: buildId, wallpapers: wallpapers.status(),
+  return { ok: true, enabled: readConfig().enabled, build: buildId, wallpapers: wallpaperStatus(),
            layoutVersion: layoutVersion() };
 }
 
@@ -1435,7 +1446,7 @@ function status(cb) {
       hideLgHomeAtStart: c.hideLgHomeAtStart === true,
       hideLgHomeAtStartAvailable: startLayoutAvailable(),
       history: !!(historyModule && historyModule.enabled && historyModule.enabled()),
-      wallpapers: wallpapers.status(),
+      wallpapers: wallpaperStatus(),
       colourPresets: COLOUR_PRESETS,
       datePresets: DATE_PRESETS,
       layout: layoutOf(c)
@@ -1457,6 +1468,7 @@ function init(opts) {
   recent.init(stateDir, opts.now);
   recentApps.init({ luna: lunaFn });
   weatherModule.init({ getJson: opts.getJson, now: opts.now });
+  daily.init({ stateDir: stateDir, getJson: opts.getJson, download: opts.download, now: opts.now });
   takeover.init({
     luna: lunaFn,
     samrescan: opts.samrescan || null,
@@ -1540,6 +1552,9 @@ function restoreLegacyScreenSaver(cb) {
  * and stops an LG Home that started before the hook.
  */
 function start() {
+  if (dailyTimer) clearInterval(dailyTimer);
+  dailyTimer = setInterval(checkDaily, DAILY_CHECK_MS);
+  checkDaily();
   cleanLegacy(function (cleaned) {
     if (!cleaned) return;
     var c = readConfig();
@@ -1586,7 +1601,80 @@ function betaChanged(cb) {
   });
 }
 
+/*
+ * What the view shows, which a picture of the day gives every time of day,
+ * with the uploads' own state beside it for the dashboards.
+ */
+function wallpaperStatus() {
+  var c = readConfig(), mine = wallpapers.status(), cur = daily.current();
+  var st = mine;
+  if (c.wallpaper.source === 'daily') {
+    var has = !!(cur && cur.provider === c.wallpaper.provider);
+    st = { available: has, uploading: false, slots: { morning: has, afternoon: has, evening: has, night: has },
+      revision: has ? 'daily-' + daily.describe(cur).revision : '' };
+  }
+  st = copy(st);
+  st.source = c.wallpaper.source;
+  st.provider = c.wallpaper.provider;
+  st.providers = daily.PROVIDERS;
+  st.mine = mine;
+  st.daily = daily.describe(cur);
+  return st;
+}
+
+// The file for a time of day: the picture of the day while that is the source, unless the uploads are asked for.
+function wallpaperImage(slot, mine) {
+  var c = readConfig();
+  if (!mine && c.wallpaper.source === 'daily') {
+    var cur = daily.current();
+    return cur && cur.provider === c.wallpaper.provider ? daily.image('current') : null;
+  }
+  var file = wallpapers.image(slot);
+  return file ? { file: file, type: 'jpg' } : null;
+}
+
+/*
+ * The provider's picture brought up to date, hourly and as Glasshouse Home is
+ * switched on, while it is on and the picture of the day is its wallpaper.
+ */
+function checkDaily() {
+  var c = readConfig();
+  if (!c.enabled || c.wallpaper.source !== 'daily') return;
+  daily.refresh(c.wallpaper.provider, function (err, meta, changed) {
+    if (err) return console.error('home: the picture of the day could not be read: ' + err.message);
+    if (changed) console.log('home: wallpaper is now ' + meta.provider + '\'s picture of the day, ' + meta.id);
+  });
+}
+
+/*
+ * The wallpaper's source. A picture of the day is fetched before it becomes
+ * the source, so a provider that cannot be reached leaves the wallpaper as it
+ * was. The uploads are kept either way.
+ */
+function setWallpaperSource(body, cb) {
+  var c = readConfig();
+  function save(changes) {
+    c = readConfig();
+    var before = copy(c.wallpaper);
+    c.wallpaper = changes.wallpaper;
+    if (!saveConfig()) {
+      c.wallpaper = before;
+      return cb({ ok: false, error: msg('srv.home.saveFailed', 'could not save the layout') });
+    }
+    cb({ ok: true, wallpapers: wallpaperStatus() });
+  }
+  if (body.source === 'mine') return save({ wallpaper: { source: 'mine', provider: c.wallpaper.provider } });
+  var provider = daily.validProvider(body.provider);
+  if (body.source !== 'daily' || !provider) return cb({ ok: false, error: 'source mine, or daily with a provider, expected' });
+  daily.refresh(provider, function (err) {
+    if (err) return cb({ ok: false, error: msg('srv.home.daily.failed', 'The picture of the day could not be fetched: {error}', { error: err.message }) });
+    save({ wallpaper: { source: 'daily', provider: provider } });
+  });
+}
+
 function stop() {
+  if (dailyTimer) clearInterval(dailyTimer);
+  dailyTimer = null;
   cancelWake();
   stopBeatWatch();
   if (holdTimer) clearTimeout(holdTimer);
@@ -1622,7 +1710,15 @@ module.exports = {
   iconPath: iconPath,
   // Back on the view: the TV's recent apps (lib/home-recent-apps).
   recentApps: recentApps,
-  wallpaperPath: wallpapers.image,
+  wallpaperImage: wallpaperImage,
+  dailyImage: daily.image,
+  // A provider's picture to look at before choosing it.
+  dailyPreview: function (provider, cb) {
+    daily.preview(provider, function (err, meta) {
+      if (err) return cb({ ok: false, error: msg('srv.home.daily.failed', 'The picture of the day could not be fetched: {error}', { error: err.message }) });
+      cb({ ok: true, picture: daily.describe(meta) });
+    });
+  },
   uploadWallpaper: function (slot, req, cb) {
     var sup = supported();
     if (!sup.ok) return cb({ ok: false, error: sup.reason });
@@ -1632,7 +1728,8 @@ module.exports = {
     var sup = supported();
     if (!sup.ok) return cb({ ok: false, error: sup.reason });
     if (body && body.removeUploads === true) return wallpapers.removeUploads(cb);
-    cb({ ok: false, error: 'removeUploads expected' });
+    if (body && body.source !== undefined) return setWallpaperSource(body, cb);
+    cb({ ok: false, error: 'removeUploads or source expected' });
   },
   normalise: normalise,
   layout: function () { return layoutOf(readConfig()); },

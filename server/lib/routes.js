@@ -1095,12 +1095,23 @@ function handleHomeRoute(req, res, u, pathname) {
       return homePictureModule.picture(String(u.query && u.query.kind || ''), Number(u.query && u.query.port), reply,
         String(u.query && u.query.app || ''));
     }
-    if (pathname === '/api/home/wallpaper') {
-      var wallpaper = homeModule.wallpaperPath(String(u.query && u.query.slot || ''));
-      if (!wallpaper) return send(res, 404, JSON.stringify({ ok: false, error: 'no wallpaper uploaded' }));
-      return sendIconFile(req, res, wallpaper, function (status, error) {
+    // ?mine=1 is the upload for the slot even while a picture of the day is the wallpaper.
+    if (pathname === '/api/home/wallpaper' || pathname === '/api/home/wallpaper/daily') {
+      var wallpaper = pathname === '/api/home/wallpaper'
+        ? homeModule.wallpaperImage(String(u.query && u.query.slot || ''), String(u.query && u.query.mine || '') === '1')
+        : homeModule.dailyImage(String(u.query && u.query.which || '') === 'preview' ? 'preview' : 'current',
+                                String(u.query && u.query.provider || ''));
+      if (!wallpaper) return send(res, 404, JSON.stringify({ ok: false, error: 'no wallpaper' }));
+      return sendIconFile(req, res, wallpaper.file, function (status, error) {
         send(res, status, JSON.stringify({ ok: false, error: error }));
-      }, 'image/jpeg');
+      }, wallpaper.type === 'png' ? 'image/png' : 'image/jpeg');
+    }
+    // A preview goes out to the provider, so only for a client that may change the wallpaper.
+    if (pathname === '/api/home/wallpaper/daily/preview') {
+      if (!config.allowControl && !fromTV(req)) {
+        return send(res, 403, JSON.stringify({ ok: false, error: msg('srv.controlsOff', 'controls disabled in config') }));
+      }
+      return homeModule.dailyPreview(String(u.query && u.query.provider || ''), reply);
     }
     if (pathname === '/api/home/recents') return homeModule.recentApps.list(reply);
     if (pathname === '/api/home/recents/image') {

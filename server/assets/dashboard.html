@@ -985,8 +985,20 @@ function homeRows(d) {
     });
     var walls = d.wallpapers || {};
     r.push(head(t('home.wall.title', 'Wallpaper')));
-    r.push({ label: t('home.wall.title', 'Wallpaper'), value: walls.available ? t('home.wall.uploadedValue', 'Uploaded') : t('home.wall.black', 'Black'),
-             hint: t('home.wall.tvHint', 'Images for each time of day are uploaded on the browser dashboard\u2019s Home tab.') });
+    // OK steps from the uploads through the providers; each fetches its picture before it applies.
+    var wallNames = { mine: t('home.wall.sourceMine', 'My images, one for each time of day'), bing: t('home.wall.bing', 'Bing'),
+                      wikimedia: t('home.wall.wikimedia', 'Wikimedia Commons') };
+    var wallSteps = ['mine', 'bing', 'wikimedia'];
+    var wallNow = walls.source === 'daily' ? walls.provider : 'mine';
+    var wallNext = wallSteps[(wallSteps.indexOf(wallNow) + 1) % wallSteps.length];
+    r.push({ label: t('home.wall.source', 'Source'), value: wallNames[wallNow] || wallNow, cls: 'act',
+             act: can ? 'homeWallSource' : null, key: wallNext,
+             press: t('tv.home.wall.sourcePress', 'Press OK for {name}', { name: wallNames[wallNext] }),
+             hint: walls.source === 'daily' && walls.daily
+               ? (walls.daily.title || '') + (walls.daily.credit ? ' \u2014 ' + walls.daily.credit : '')
+               : walls.mine && walls.mine.available
+                 ? t('home.wall.tvHint', 'Images for each time of day are uploaded on the browser dashboard\u2019s Home tab.')
+                 : t('home.wall.black', 'Black') });
     r.push(head(t('tv.home.head.more', 'More')));
     r.push({ label: t('home.reset', 'Reset the layout'), value: '', act: can ? 'homeReset' : null,
              press: t('tv.home.reset.press', 'Press OK, then again, to reset'),
@@ -2499,6 +2511,11 @@ function activate() {
       return homeLayout({ colours: r.key.id === homeData.colourPresets[0].id ? null : { text: r.key.text, accent: r.key.accent } });
     case 'homeDateFormat':
       return homeLayout({ dateFormat: r.key });
+    case 'homeWallSource':
+      r.value = t('home.wall.fetching', 'Fetching today\u2019s picture\u2026');
+      render();
+      return sendPost('/api/home/wallpapers', r.key === 'mine' ? { source: 'mine' } : { source: 'daily', provider: r.key },
+                      t('tv.flash.switchedOn', 'Switched on'));
     case 'homeWeather':
       return homeLayout({ weather: { on: !r.on } });
     case 'homeWeatherName':

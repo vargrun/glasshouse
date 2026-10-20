@@ -66,7 +66,7 @@ A refused device tile leaves the next input switch from the remote recorded for 
 
 Switching Glasshouse Home off reports a Home-key restore failure, including a saved mapping that could not be deleted. App removal is refused until the key and Home and start-up settings no longer target it, and is confirmed only after the TV reports the app absent. A missing app found by the guard switches the feature off and restores its saved settings and Home key.
 
-Home wallpapers uploaded through the browser go into `/var/lib/tvweb/home-wallpaper-uploads`, one for each time of day. The directory is excluded from packages and rollback copies and removed with the server. Failed LG Home restoration remains visible and retryable on both dashboards.
+Home wallpapers uploaded through the browser go into `/var/lib/tvweb/home-wallpaper-uploads`, one for each time of day, and a picture of the day into `/var/lib/tvweb/home-wallpaper-daily`, which holds only the picture in use and at most one preview, in two slots used in turn. The directories are excluded from packages and rollback copies and removed with the server. Failed LG Home restoration remains visible and retryable on both dashboards.
 
 Glasshouse Home leaves empty rows out and centres the remaining rows below the clock. Empty rows reappear as movable strips while arranging.
 
@@ -95,7 +95,7 @@ Homebrew Channel it starts limited to the TV, until the owner opens it during
 setup. While a phone is being used to enter Home Assistant details,
 port 8081 answers a one-time code for up to ten minutes. The server connects out
 only to the configured MQTT broker, to the NTP server when one is configured,
-when update checks are switched on, to GitHub's releases API, and, while Glasshouse Home's weather is on, to Open-Meteo's forecast and place search (`api.open-meteo.com`, `geocoding-api.open-meteo.com`). Update checks and the weather are off by default.
+when update checks are switched on, to GitHub's releases API, while Glasshouse Home's weather is on, to Open-Meteo's forecast and place search (`api.open-meteo.com`, `geocoding-api.open-meteo.com`), and, while its wallpaper is a picture of the day or one is previewed, to that provider: Bing (`www.bing.com`) or Wikimedia Commons (`en.wikipedia.org`, `upload.wikimedia.org`). Update checks, the weather and the picture of the day are off by default.
 
 With **Share app icons** on in the MQTT tab (`iconServer` in `config.json`), port 8082 (the dashboard's
 port plus two) answers on the whole network, dual-stack like the dashboard,

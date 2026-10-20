@@ -1412,6 +1412,18 @@ for 30 minutes, which every caller shares; a failed refresh is retried after
 five minutes and the last forecast shown, marked stale, until it is six hours
 old. The view asks after each layout load and every ten minutes.
 
+A picture of the day (`lib/home-daily-wallpaper.js`) takes the uploads' place
+in the wallpaper status the view reads: every slot has it, and its revision
+changes with each picture. Each provider is asked what its picture is (Bing's
+archive JSON, Wikipedia's featured feed for Commons), and an id from that
+answer decides whether anything is downloaded. Pictures are kept blue-green in
+two slots, `wallpaper-a` and `wallpaper-b`: a new picture or a preview goes
+into the one that is not the wallpaper, is kept only if it starts as a JPEG or
+PNG and is at most 20 MB, and `state.json` then names it the wallpaper and the
+old one is deleted. A fetch that fails or is cut short so never touches the
+wallpaper, and fetches run one at a time. The source and provider are in
+`home.json`.
+
 ## Apps kept ready in the background
 
 webOS's preload manager keeps apps loaded so they open quickly, including ones

@@ -536,7 +536,9 @@ function homeToggleChannel(id) {
 function renderHomeWalls() {
   const box = q('home-walls');
   if (!box) return;
-  const walls = homeStatus.wallpapers || {};
+  renderHomeWallSource();
+  // The uploads' own state: while a picture of the day is the wallpaper, the status's own is that picture's.
+  const walls = (homeStatus.wallpapers && homeStatus.wallpapers.mine) || homeStatus.wallpapers || {};
   const busy = !homeWritable() || homeWallUploading || walls.uploading;
   q('home-wall-slot').disabled = busy;
   q('home-wall-file').disabled = busy;
@@ -556,8 +558,106 @@ function renderHomeWalls() {
   ];
   box.innerHTML = slots.map(([key, label]) => `<figure class="home-wall">
     ${walls.slots && !walls.slots[key] ? `<div class="home-wall-empty">${esc(t('home.wall.black', 'Black'))}</div>`
-      : `<img src="${esc(api('/api/home/wallpaper?slot=' + key + '&v=' + encodeURIComponent(walls.revision || '')))}" alt="" loading="lazy">`}
+      : `<img src="${esc(api('/api/home/wallpaper?mine=1&slot=' + key + '&v=' + encodeURIComponent(walls.revision || '')))}" alt="" loading="lazy">`}
     <figcaption class="sub">${esc(label)}</figcaption></figure>`).join('');
+}
+
+// ---------------------------------------------------------------- picture of the day
+
+const HOME_WALL_PROVIDERS = () => ({
+  bing: t('home.wall.bing', 'Bing'),
+  wikimedia: t('home.wall.wikimedia', 'Wikimedia Commons')
+});
+// What the section shows, which can differ from what is saved until a picture is applied.
+let homeWallChoice = null;   // { source, provider }
+let homeWallLooked = null;   // { provider, picture } or { provider, loading } or { provider, error }
+
+function homeWallSaved() {
+  const w = (homeStatus && homeStatus.wallpapers) || {};
+  return { source: w.source || 'mine', provider: w.provider || 'bing', daily: w.daily || null };
+}
+
+function renderHomeWallSource() {
+  const saved = homeWallSaved();
+  if (!homeWallChoice) homeWallChoice = { source: saved.source, provider: saved.provider };
+  const can = homeWritable() && !homeSaving;
+  const choice = homeWallChoice, names = HOME_WALL_PROVIDERS();
+  q('home-wall-source').value = choice.source;
+  q('home-wall-source').disabled = !can;
+  q('home-wall-provider').value = choice.provider;
+  q('home-wall-provider').disabled = !can;
+  q('home-wall-daily').hidden = choice.source !== 'daily';
+  q('home-wall-mine').hidden = choice.source === 'daily';
+  q('home-wall-now').textContent = saved.source === 'daily'
+    ? t('home.wall.nowDaily', 'Now: {provider}\u2019s picture of the day.', { provider: names[saved.provider] || saved.provider })
+    : t('home.wall.nowMine', 'Now: the uploaded images.');
+  // The applied provider shows the wallpaper as it is; another shows its preview.
+  const applied = saved.source === 'daily' && saved.provider === choice.provider && saved.daily && saved.daily.provider === choice.provider;
+  const looked = homeWallLooked && homeWallLooked.provider === choice.provider ? homeWallLooked : null;
+  const fig = q('home-wall-pod'), img = q('home-wall-pod-img'), state = q('home-wall-pod-state');
+  const pic = applied ? saved.daily : looked && looked.picture;
+  fig.hidden = choice.source !== 'daily' || (!pic && !looked);
+  if (pic) {
+    const src = applied ? '/api/home/wallpaper/daily?which=current' : '/api/home/wallpaper/daily?which=preview&provider=' + choice.provider;
+    const want = api(src + '&v=' + encodeURIComponent(pic.revision || ''));
+    if (img.dataset.src !== want) { img.dataset.src = want; img.src = want; }
+    img.hidden = false;
+    q('home-wall-pod-title').textContent = pic.title || names[choice.provider];
+    q('home-wall-pod-credit').textContent = pic.credit || '';
+    state.textContent = applied ? t('home.wall.applied', 'On Glasshouse Home now.') : t('home.wall.preview', 'A preview: not on Glasshouse Home until applied.');
+  } else {
+    img.hidden = true;
+    q('home-wall-pod-title').textContent = names[choice.provider];
+    q('home-wall-pod-credit').textContent = '';
+    state.textContent = looked && looked.loading ? t('home.wall.fetching', 'Fetching today\u2019s picture…') : looked && looked.error || '';
+  }
+  const apply = q('home-wall-apply');
+  apply.parentElement.hidden = choice.source !== 'daily' || applied;
+  apply.disabled = !can || !(looked && looked.picture);
+}
+
+// Choosing My images switches back at once; choosing the picture of the day previews before it applies.
+function homeWallSourceChosen(source) {
+  homeWallChoice = { source, provider: homeWallChoice ? homeWallChoice.provider : homeWallSaved().provider };
+  if (source === 'mine') {
+    if (homeWallSaved().source !== 'mine') return homeSetWallpaper({ source: 'mine' });
+    return renderHomeWallSource();
+  }
+  homeWallPreview(homeWallChoice.provider);
+}
+
+async function homeWallPreview(provider) {
+  homeWallChoice = { source: 'daily', provider };
+  const saved = homeWallSaved();
+  if (saved.source === 'daily' && saved.provider === provider && saved.daily) return renderHomeWallSource();
+  homeWallLooked = { provider, loading: true };
+  renderHomeWallSource();
+  try {
+    const r = await homeGet('/api/home/wallpaper/daily/preview?provider=' + encodeURIComponent(provider));
+    if (homeWallChoice.provider === provider) homeWallLooked = { provider, picture: r.picture };
+  } catch (e) {
+    if (homeWallChoice.provider === provider) homeWallLooked = { provider, error: e.message };
+  }
+  renderHomeWallSource();
+}
+
+async function homeSetWallpaper(body) {
+  if (!homeWritable()) return;
+  homeSaving = true;
+  renderHome();
+  try {
+    await homePost('/api/home/wallpapers', body);
+  } catch (e) { showErr(e.message); }
+  homeSaving = false;
+  await loadHome();
+}
+
+async function homeWallApply() {
+  const provider = homeWallChoice.provider;
+  q('home-wall-pod-state').textContent = t('home.wall.applying', 'Applying…');
+  await homeSetWallpaper({ source: 'daily', provider });
+  homeWallLooked = null;
+  renderHomeWallSource();
 }
 
 async function homeUploadWall() {
