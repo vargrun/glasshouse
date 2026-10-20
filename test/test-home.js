@@ -1258,6 +1258,29 @@ step('a date format is kept only with known placeholders, and null puts the tran
   refuseNext();
 });
 
+step('the weather settings change only in the parts sent, and anything unusable is dropped', function (done) {
+  start(null);
+  home.status(function (st) {
+    assert.deepEqual(st.layout.weather, { on: false, place: null, units: 'c', showPlace: false }, 'off until chosen');
+    var place = { name: 'Sarajevo', country: 'Bosna i Hercegovina', lat: 43.84864, lon: 18.35644 };
+    home.setLayout({ weather: { place: place, on: true } }, function (r) {
+      assert.ok(r.ok, r.error);
+      assert.deepEqual(r.layout.weather, { on: true, units: 'c', showPlace: false,
+        place: { name: 'Sarajevo', country: 'Bosna i Hercegovina', lat: 43.8486, lon: 18.3564 } });
+      home.setLayout({ weather: { units: 'f', showPlace: true } }, function (r2) {
+        assert.strictEqual(r2.layout.weather.units, 'f');
+        assert.strictEqual(r2.layout.weather.showPlace, true);
+        assert.strictEqual(r2.layout.weather.on, true, 'the rest kept');
+        assert.strictEqual(r2.layout.weather.place.name, 'Sarajevo');
+        home.setLayout({ weather: { on: 'yes', units: 'kelvin', place: { name: 'Nowhere', lat: 200, lon: 0 } } }, function (r3) {
+          assert.deepEqual(r3.layout.weather, { on: true, place: null, units: 'f', showPlace: true }, 'a place without coordinates is dropped');
+          done();
+        });
+      });
+    });
+  });
+});
+
 step('a failed save switches nothing', function (done) {
   start(null);
   var blocked = path.join(dir, 'home.json.tmp');

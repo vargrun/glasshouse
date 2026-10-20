@@ -136,6 +136,7 @@ function renderHome() {
   renderHomeWalls();
   renderHomeColours();
   renderHomeDate();
+  renderHomeWeather();
   q('home-reset').disabled = !homeWritable();
 }
 
@@ -213,6 +214,74 @@ function renderHomeDatePreview() {
   if (!field || !out) return;
   const f = field.value.trim();
   out.textContent = f ? t('home.dateFormat.preview', 'Today: {date}', { date: homeDateText(f, new Date()) }) : '';
+}
+
+// "Sarajevo, Federacija Bosne i Hercegovine, Bosna i Hercegovina", as the search gives it.
+function homePlaceName(p) {
+  return [p.name, p.region, p.country].filter(Boolean).join(', ');
+}
+
+let homeWxPlaces = [];
+
+function renderHomeWeather() {
+  const btn = q('home-wx-on');
+  if (!btn || !homeLayout) return;
+  const w = homeLayout.weather || { on: false, place: null, units: 'c' };
+  const can = homeWritable() && !homeSaving;
+  updateToggle(btn, { cls: w.on ? 'good' : 'idle', label: w.on ? t('common.on', 'On') : t('common.off', 'Off') });
+  btn.disabled = !can || (!w.on && !w.place);
+  q('home-wx-place').textContent = w.place
+    ? t('home.weather.place', 'For {place}', { place: homePlaceName(w.place) })
+    : t('home.weather.noPlace', 'Search for a place below first.');
+  const name = q('home-wx-name');
+  updateToggle(name, { cls: w.showPlace ? 'good' : 'idle', label: w.showPlace ? t('common.on', 'On') : t('common.off', 'Off') });
+  name.disabled = !can;
+  const units = q('home-wx-units');
+  units.value = w.units;
+  units.disabled = !can;
+  q('home-wx-q').disabled = !can;
+  q('home-wx-search').disabled = !can;
+}
+
+function homeWeatherSwitch() {
+  const w = homeLayout.weather;
+  homeSaveLayout({ weather: { on: !w.on } });
+}
+
+// The TV asks Open-Meteo, so the browser never contacts it; names in the browser's language where it has them.
+async function homeWeatherSearch() {
+  const name = q('home-wx-q').value.trim();
+  const box = q('home-wx-results');
+  if (!name) return;
+  box.hidden = false;
+  box.innerHTML = `<div class="sub">${esc(t('home.weather.searching', 'Searching…'))}</div>`;
+  const lang = String(navigator.language || 'en').split('-')[0].toLowerCase();
+  try {
+    const r = await homeGet('/api/home/weather/search?q=' + encodeURIComponent(name) + '&lang=' + encodeURIComponent(lang));
+    homeWxPlaces = r.places || [];
+  } catch (e) {
+    homeWxPlaces = [];
+    box.innerHTML = `<div class="sub">${esc(e.message)}</div>`;
+    return;
+  }
+  if (!homeWxPlaces.length) {
+    box.innerHTML = `<div class="sub">${esc(t('home.weather.noMatch', 'No place by that name.'))}</div>`;
+    return;
+  }
+  box.innerHTML = homeWxPlaces.map((p, i) => `<div class="prot-row">
+      <div class="prot-main"><div class="prot-title">${esc(p.name)}</div>
+        <div class="prot-desc">${esc([p.region, p.country].filter(Boolean).join(', '))}</div></div>
+      <div class="prot-status"><button type="button" class="pill idle" onclick="homeWeatherPick(${i})">${esc(t('home.weather.use', 'Use'))}</button></div>
+    </div>`).join('');
+}
+
+// A place picked switches the weather on, which is why it was searched for.
+async function homeWeatherPick(i) {
+  const place = homeWxPlaces[i];
+  if (!place) return;
+  q('home-wx-results').hidden = true;
+  q('home-wx-q').value = '';
+  await homeSaveLayout({ weather: { place, on: true } });
 }
 
 // 0 is the default; the rest are the server's presets, in its order.

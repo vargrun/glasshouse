@@ -318,6 +318,75 @@ async function visitHomeDate(browser, base, problems) {
   } finally { await page.close(); }
 }
 
+// The weather beside the clock, under the picture plate once that shows, with the rows moved clear of it; and gone when off.
+async function visitHomeWeather(browser, base, problems) {
+  const page = await browser.newPage({ locale: 'en-GB' });
+  page.on('pageerror', e => problems.push('Home weather: ' + e.message));
+  const layout = { rows: ['app', 'dev', 'ch'], order: { app: [], dev: [], ch: [] },
+    hidden: { app: [], dev: [], ch: [] }, channels: [], hintSeen: true, picture: false,
+    weather: { on: true, units: 'c', place: { name: 'Sarajevo', lat: 43.8486, lon: 18.3564 } } };
+  const forecast = { place: 'Sarajevo', units: 'c', now: { temp: 12, code: 3, day: true },
+    days: [{ date: '2026-10-21', code: 63, max: 15, min: 7 }, { date: '2026-10-22', code: 71, max: 9, min: 1 }] };
+  const plate = { ok: true, range: 'hdr', mode: { display: 'HDR Filmmaker' }, light: 100, oled: true,
+    signal: { width: 3840, height: 2160, hz: 24, chroma: 'YCbCr 4:4:4', bits: 10, hdr: 'hdr10' } };
+  let version = 1;
+  const reply = (route, body) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
+  await page.route('**/api/home/**', route => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname === '/api/home/catalogue') {
+      return reply(route, { ok: true, layout, layoutVersion: String(version), apps: [], devices: [], channels: [],
+        sources: { channels: 0 }, order: { app: ['lg-home'], dev: [], ch: [] } });
+    }
+    if (pathname === '/api/home/now') return reply(route, { kind: 'input', port: 4, title: 'HDMI 4' });
+    if (pathname === '/api/home/picture') return reply(route, plate);
+    if (pathname === '/api/home/weather') return reply(route, { ok: true, weather: layout.weather.on ? forecast : null });
+    return reply(route, { ok: true, build: 'one', layoutVersion: String(version) });
+  });
+  const state = () => page.evaluate(() => {
+    const wx = document.getElementById('weather'), rows = document.getElementById('rows');
+    const box = wx.getBoundingClientRect(), when = document.getElementById('when').getBoundingClientRect();
+    return { shown: wx.className !== 'none', under: wx.getAttribute('data-under'), temp: (wx.querySelector('.wxt') || {}).textContent,
+      days: document.getElementById('wxSay').textContent + ' ' + document.getElementById('wxDays').textContent,
+      width: box.width, plate: document.getElementById('plate').className !== 'none',
+      clear: box.bottom <= rows.getBoundingClientRect().top + 1, level: Math.abs(box.bottom - when.bottom) };
+  });
+  const changed = async () => {
+    version++;
+    await page.clock.fastForward(20000);
+    await page.waitForTimeout(200);
+  };
+  try {
+    await page.clock.install({ time: new Date(2026, 9, 20, 12, 0) });
+    await page.goto(base + '/assets/home.html');
+    await page.waitForFunction(() => document.getElementById('weather').className !== 'none', null, { timeout: 4000 })
+      .catch(() => problems.push('Home weather: never shown'));
+    let s = await state();
+    if (s.under !== '0') problems.push('Home weather: under a plate that is not shown');
+    if (s.temp !== '12°') problems.push('Home weather: the temperature read "' + s.temp + '"');
+    if (!/Cloudy/.test(s.days) || !/Wed/.test(s.days) || !/15° \/ 7°/.test(s.days) || !/Thu/.test(s.days)) {
+      problems.push('Home weather: the conditions and days read "' + s.days + '"');
+    }
+    if (s.level > 30) problems.push('Home weather: beside the clock but ' + Math.round(s.level) + 'px off its foot');
+    if (/Sarajevo/.test(s.days)) problems.push('Home weather: the place\'s name shown before it was asked for');
+    if (s.width > 500) problems.push('Home weather: ' + Math.round(s.width) + 'px wide beside the clock, crowding what was last on');
+    layout.weather = Object.assign({}, layout.weather, { showPlace: true });
+    await changed();
+    await page.waitForFunction(() => /^Sarajevo/.test(document.getElementById('wxSay').textContent), null, { timeout: 4000 })
+      .catch(() => problems.push('Home weather: the place\'s name not shown once asked for'));
+    layout.picture = true;
+    await changed();
+    await page.waitForFunction(() => document.getElementById('weather').getAttribute('data-under') === '1', null, { timeout: 4000 })
+      .catch(() => problems.push('Home weather: not moved under the picture plate'));
+    s = await state();
+    if (!s.plate) problems.push('Home weather: the plate did not show');
+    if (!s.clear) problems.push('Home weather: under the plate it runs into the rows');
+    layout.weather = Object.assign({}, layout.weather, { on: false });
+    await changed();
+    await page.waitForFunction(() => document.getElementById('weather').className === 'none', null, { timeout: 4000 })
+      .catch(() => problems.push('Home weather: still shown once switched off'));
+  } finally { await page.close(); }
+}
+
 async function visitHomeArrangement(browser, base, problems) {
   const page = await browser.newPage();
   page.on('pageerror', e => problems.push('Home arranging: ' + e.message));
@@ -804,6 +873,7 @@ async function visitHomeRecents(browser, base, problems) {
   await visitHomePicture(browser, base, problems);
   await visitHomeColours(browser, base, problems);
   await visitHomeDate(browser, base, problems);
+  await visitHomeWeather(browser, base, problems);
   await visitHomeEditor(browser, base, problems);
   await visitHomeOrder(browser, base, problems);
   await visitHomeUploads(browser, base, problems);
@@ -813,6 +883,6 @@ async function visitHomeRecents(browser, base, problems) {
   await browser.close();
   for (const p of problems) console.log(p);
   console.log((web.length + tv.length) + ' tabs opened (' + web.length + ' web, ' + tv.length + ' TV app), ' +
-              'Home arranging, picture, colours, date, update, editing, order, uploads, readiness, availability and recents checked, ' + problems.length + ' problem' + (problems.length === 1 ? '' : 's'));
+              'Home arranging, picture, colours, date, weather, update, editing, order, uploads, readiness, availability and recents checked, ' + problems.length + ' problem' + (problems.length === 1 ? '' : 's'));
   process.exit(problems.length ? 1 : 0);
 })().catch(e => { console.error(e.message); process.exit(1); });

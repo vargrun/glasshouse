@@ -1029,6 +1029,39 @@
   </form>
   <div class="sub" id="home-date-preview"></div>
 
+  <div class="grp grp-sec" data-t="home.weather.title">Weather</div>
+  <div class="sub" data-t="home.weather.desc">Now, tomorrow and the day after, in the top right of Glasshouse Home: beside the clock, or under the picture details while they show. The TV asks Open-Meteo, a free weather service, for the chosen place every 30 minutes; nothing is sent while this is off.</div>
+  <div class="prot-table">
+    <div class="prot-row">
+      <div class="prot-main">
+        <div class="prot-title" data-t="home.weather.show">Show the weather</div>
+        <div class="prot-desc" id="home-wx-place">&mdash;</div>
+      </div>
+      <div class="prot-status"><button type="button" class="pill idle" id="home-wx-on" onclick="homeWeatherSwitch()">&mdash;</button></div>
+    </div>
+    <div class="prot-row">
+      <div class="prot-main">
+        <div class="prot-title" data-t="home.weather.showPlace">Show the place&rsquo;s name</div>
+        <div class="prot-desc" data-t="home.weather.showPlaceDesc">Before the conditions, as &ldquo;Sarajevo&rdquo;.</div>
+      </div>
+      <div class="prot-status"><button type="button" class="pill idle" id="home-wx-name" onclick="homeSaveLayout({ weather: { showPlace: !homeLayout.weather.showPlace } })">&mdash;</button></div>
+    </div>
+    <div class="prot-row">
+      <div class="prot-main"><div class="prot-title" data-t="home.weather.units">Temperature</div></div>
+      <div class="prot-status">
+        <select id="home-wx-units" class="pill-sel" onchange="homeSaveLayout({ weather: { units: this.value } })">
+          <option value="c" data-t="home.weather.celsius">°C</option>
+          <option value="f" data-t="home.weather.fahrenheit">°F</option>
+        </select>
+      </div>
+    </div>
+  </div>
+  <form class="home-date-form" onsubmit="event.preventDefault(); homeWeatherSearch()">
+    <input type="search" id="home-wx-q" maxlength="60" autocomplete="off" placeholder="City or town" data-t-placeholder="home.weather.find" aria-label="City or town" data-t-aria-label="home.weather.find">
+    <button type="submit" id="home-wx-search" data-t="home.weather.search">Search</button>
+  </form>
+  <div class="prot-table" id="home-wx-results" hidden></div>
+
   <div class="grp grp-sec" data-t="home.wall.title">Wallpaper</div>
   <div class="sub" data-t="home.wall.optional">Optional: upload an image for each time of day. A time of day without one has a black background.</div>
   <div class="home-upload">

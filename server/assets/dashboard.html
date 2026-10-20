@@ -904,6 +904,24 @@ function homeRows(d) {
              act: can ? 'homeDateFormat' : null, key: nextDate,
              press: t('tv.home.dateFormat.press', 'Press OK for {name}', { name: nextDate || t('home.dateFormat.default', 'Default') }),
              hint: t('home.dateFormat.tvHint', 'How the date under the clock is written. Any format can be typed on the browser dashboard’s Home tab.') });
+    // The place is searched for on the browser dashboard; here it is switched on and off.
+    var wx = d.layout.weather || { on: false, place: null, units: 'c' };
+    r.push({ label: t('home.weather.show', 'Show the weather'),
+             value: wx.on ? t('common.on', 'On') : t('common.off', 'Off'), cls: wx.on ? 'on' : 'off',
+             act: can && (wx.on || wx.place) ? 'homeWeather' : null, on: wx.on,
+             press: wx.on ? t('tv.press.switchOff', 'Press OK to switch off') : t('tv.press.switchOn', 'Press OK to switch on'),
+             hint: wx.place ? t('home.weather.place', 'For {place}', { place: wx.place.name })
+                   : t('home.weather.tvNoPlace', 'Choose the place on the browser dashboard’s Home tab first.') });
+    if (wx.on) {
+      r.push({ label: t('home.weather.showPlace', 'Show the place\u2019s name'),
+               value: wx.showPlace ? t('common.on', 'On') : t('common.off', 'Off'), cls: wx.showPlace ? 'on' : 'off',
+               act: can ? 'homeWeatherName' : null, on: !!wx.showPlace,
+               press: wx.showPlace ? t('tv.press.switchOff', 'Press OK to switch off') : t('tv.press.switchOn', 'Press OK to switch on'),
+               hint: t('home.weather.showPlaceDesc', 'Before the conditions, as \u201cSarajevo\u201d.') });
+      r.push({ label: t('home.weather.units', 'Temperature'), value: wx.units === 'f' ? '°F' : '°C', cls: 'act',
+               act: can ? 'homeWeatherUnits' : null, key: wx.units === 'f' ? 'c' : 'f',
+               press: t('tv.home.weather.unitsPress', 'Press OK for {units}', { units: wx.units === 'f' ? '°C' : '°F' }) });
+    }
   }
   // Opening Home opens Glasshouse Home only while it has LG's Home's place.
   if (d.enabled && d.active) {
@@ -2481,6 +2499,12 @@ function activate() {
       return homeLayout({ colours: r.key.id === homeData.colourPresets[0].id ? null : { text: r.key.text, accent: r.key.accent } });
     case 'homeDateFormat':
       return homeLayout({ dateFormat: r.key });
+    case 'homeWeather':
+      return homeLayout({ weather: { on: !r.on } });
+    case 'homeWeatherName':
+      return homeLayout({ weather: { showPlace: !r.on } });
+    case 'homeWeatherUnits':
+      return homeLayout({ weather: { units: r.key } });
     case 'homeOpen':
       return send({ action: 'launchApp', value: 'com.webos.app.home' });
     case 'homeRowUp':

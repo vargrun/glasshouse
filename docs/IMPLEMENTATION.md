@@ -1403,6 +1403,15 @@ app is opened or closed only while it is on the list. Snapshot responses use
 `private, no-store` caching. Back cancels a pending panel load; returning Home
 discards replies from the previous visit. OK acts once on release.
 
+The weather (`lib/home-weather.js`) is Open-Meteo's, read by the server
+through `lib/fetch`'s curl or wget, since node 0.12 cannot speak its TLS. The
+layout keeps the place as a name and coordinates, found with Open-Meteo's
+geocoding search through `/api/home/weather/search`, which needs the same
+rights as a layout change. `/api/home/weather` answers from a forecast kept
+for 30 minutes, which every caller shares; a failed refresh is retried after
+five minutes and the last forecast shown, marked stale, until it is six hours
+old. The view asks after each layout load and every ten minutes.
+
 ## Apps kept ready in the background
 
 webOS's preload manager keeps apps loaded so they open quickly, including ones

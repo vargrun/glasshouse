@@ -33,6 +33,7 @@ var wallpapers = require('./home-wallpapers');
 var takeover = require('./home-takeover');
 var recent = require('./home-recent');
 var recentApps = require('./home-recent-apps');
+var weatherModule = require('./home-weather');
 
 // The separate app earlier builds installed: removed, and its settings undone.
 var HOME_APP = 'com.tvweb.home';
@@ -218,6 +219,8 @@ function defaults() {
     // { text, accent } as #rrggbb, or null for the view's own colours.
     colours: null,
     dateFormat: null,
+    // Off until a place is chosen and it is switched on (lib/home-weather).
+    weather: weatherModule.validSettings(null),
     // null until chosen: the first start keeps an empty layout an earlier build left.
     hideLgHomeAtStart: null,
     // LG's Home auto launch as it was before Glasshouse Home switched it off,
@@ -262,6 +265,7 @@ function normalise(raw) {
   d.picture = raw.picture === true;
   d.colours = validColours(raw.colours);
   d.dateFormat = validDateFormat(raw.dateFormat);
+  d.weather = weatherModule.validSettings(raw.weather);
   if (typeof raw.hideLgHomeAtStart === 'boolean') d.hideLgHomeAtStart = raw.hideLgHomeAtStart;
   if (typeof raw.lgAutoLaunch === 'string' && raw.lgAutoLaunch) d.lgAutoLaunch = raw.lgAutoLaunch;
   if (typeof raw.lgAutoLaunchCheck === 'string' && raw.lgAutoLaunchCheck) d.lgAutoLaunchCheck = raw.lgAutoLaunchCheck;
@@ -381,7 +385,9 @@ function setLayout(body, cb) {
     // null puts the view's own colours back.
     colours: body.colours !== undefined ? body.colours : c.colours,
     // null puts the translation's order back.
-    dateFormat: body.dateFormat !== undefined ? body.dateFormat : c.dateFormat
+    dateFormat: body.dateFormat !== undefined ? body.dateFormat : c.dateFormat,
+    // Only the parts sent change; place null forgets the place.
+    weather: mergeWeather(c.weather, body.weather)
   });
   if (body.reset === true) {
     var d = defaults();
@@ -401,9 +407,19 @@ function setLayout(body, cb) {
   cb({ ok: true, layout: layoutOf(config), layoutVersion: layoutVersion() });
 }
 
+function mergeWeather(saved, sent) {
+  var w = copy(saved);
+  if (!sent || typeof sent !== 'object') return w;
+  if (typeof sent.on === 'boolean') w.on = sent.on;
+  if (sent.place !== undefined) w.place = sent.place;
+  if (sent.units === 'c' || sent.units === 'f') w.units = sent.units;
+  if (typeof sent.showPlace === 'boolean') w.showPlace = sent.showPlace;
+  return w;
+}
+
 function layoutOf(c) {
   return { rows: c.rows, order: c.order, sort: c.sort, hidden: c.hidden, channels: c.channels, hintSeen: c.hintSeen, picture: c.picture,
-    colours: c.colours, dateFormat: c.dateFormat };
+    colours: c.colours, dateFormat: c.dateFormat, weather: c.weather };
 }
 
 // ---------------------------------------------------------------- what it shows
@@ -1440,6 +1456,7 @@ function init(opts) {
   wallpapers.init(stateDir);
   recent.init(stateDir, opts.now);
   recentApps.init({ luna: lunaFn });
+  weatherModule.init({ getJson: opts.getJson, now: opts.now });
   takeover.init({
     luna: lunaFn,
     samrescan: opts.samrescan || null,
@@ -1595,6 +1612,8 @@ module.exports = {
   setHideLgHomeAtStart: function (body, cb) { change(function (done) { setHideLgHomeAtStart(body, done); }, cb); },
   enable: function (cb) { change(function (done) { enable(function (r) { if (r.ok) homeKeysFn(true); done(r); }); }, cb); },
   betaChanged: function (cb) { change(betaChanged, cb); },
+  weather: function (cb) { weatherModule.weather(readConfig().weather, cb); },
+  weatherSearch: weatherModule.search,
   disable: function (cb) { change(function (done) { disable(function (r) { homeKeysFn(false); done(r); }); }, cb); },
   uninstall: function (cb) { change(uninstall, cb); },
   beat: beat,

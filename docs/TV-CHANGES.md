@@ -95,7 +95,7 @@ Homebrew Channel it starts limited to the TV, until the owner opens it during
 setup. While a phone is being used to enter Home Assistant details,
 port 8081 answers a one-time code for up to ten minutes. The server connects out
 only to the configured MQTT broker, to the NTP server when one is configured,
-and, when update checks are switched on, to GitHub's releases API. Update checks are off by default.
+when update checks are switched on, to GitHub's releases API, and, while Glasshouse Home's weather is on, to Open-Meteo's forecast and place search (`api.open-meteo.com`, `geocoding-api.open-meteo.com`). Update checks and the weather are off by default.
 
 With **Share app icons** on in the MQTT tab (`iconServer` in `config.json`), port 8082 (the dashboard's
 port plus two) answers on the whole network, dual-stack like the dashboard,

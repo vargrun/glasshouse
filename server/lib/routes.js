@@ -1082,6 +1082,14 @@ function handleHomeRoute(req, res, u, pathname) {
       return homeModule.channelList(function (list) { reply({ ok: true, channels: list, tuner: !!list }); });
     }
     if (pathname === '/api/home/guide') return homeModule.guide(function (g) { reply({ ok: true, guide: g }); });
+    if (pathname === '/api/home/weather') return homeModule.weather(reply);
+    // A search goes out to Open-Meteo, so only for a client that may change the layout.
+    if (pathname === '/api/home/weather/search') {
+      if (!config.allowControl && !fromTV(req)) {
+        return send(res, 403, JSON.stringify({ ok: false, error: msg('srv.controlsOff', 'controls disabled in config') }));
+      }
+      return homeModule.weatherSearch(String(u.query && u.query.q || ''), String(u.query && u.query.lang || ''), reply);
+    }
     if (pathname === '/api/home/now') return homeModule.now(reply);
     if (pathname === '/api/home/picture') {
       return homePictureModule.picture(String(u.query && u.query.kind || ''), Number(u.query && u.query.port), reply,
