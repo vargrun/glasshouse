@@ -283,14 +283,20 @@ body{font-family:'Manrope',sans-serif;color:#ece7df;-webkit-font-smoothing:antia
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
+  // A TV language missing from the engine's ICU data gives ICU's root names, the month as "M10", so English is the fallback.
+  var DATE_LOCALES = [undefined, 'en'];
+
   // The words from the browser's locale, the order from the translation.
   function dateText(d) {
-    function part(opts) {
-      try { return d.toLocaleDateString(undefined, opts); } catch (e) { return ''; }
+    var locales = DATE_LOCALES, weekday = '', month = '', i;
+    for (i = 0; i < locales.length; i++) {
+      try {
+        weekday = d.toLocaleDateString(locales[i], { weekday: 'long' });
+        month = d.toLocaleDateString(locales[i], { month: 'long' });
+      } catch (e) { continue; }
+      if (!/^M\d+$/.test(month)) break;
     }
-    return t('home.date', '{weekday} {day} {month}', {
-      weekday: part({ weekday: 'long' }), day: d.getDate(), month: part({ month: 'long' })
-    });
+    return t('home.date', '{weekday} {day} {month}', { weekday: weekday, day: d.getDate(), month: month });
   }
 
   function request(method, url, body, cb) {
