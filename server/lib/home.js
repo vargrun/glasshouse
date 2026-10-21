@@ -834,9 +834,17 @@ function switchTo(on, cb) {
 
 // ---------------------------------------------------------------- settings
 
+/*
+ * A key the TV lacks is left out of the answer rather than failing the read.
+ * A C1 (webOS 6.5.3) has no defaultApps: asked for it with other keys, it
+ * answers returnValue false, errorKey ["defaultApps"] and the settings it has;
+ * asked for it alone, "There is no matched result from DB".
+ */
 function readSettings(keys, cb) {
   luna(SETTINGS + 'getSystemSettings', { category: 'general', keys: keys }, function (r) {
-    cb(r && r.returnValue !== false && r.settings ? r.settings : null);
+    if (r && r.settings && (r.returnValue !== false || isArray(r.errorKey))) return cb(r.settings);
+    if (r && r.returnValue === false && /no matched result/i.test(String(r.errorText || ''))) return cb({});
+    cb(null);
   });
 }
 

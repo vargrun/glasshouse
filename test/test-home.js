@@ -140,6 +140,10 @@ function luna(uri, p, cb) {
     if (tv.settingsReadFails) return process.nextTick(function () { cb({ returnValue: false }); });
     r.settings = {};
     p.keys.forEach(function (k) { if (tv.settings[k] !== undefined) r.settings[k] = copy(tv.settings[k]); });
+    // A key the TV lacks, as webOS 6.5.3 answers for defaultApps.
+    var lacking = p.keys.filter(function (k) { return (tv.lacksKeys || []).indexOf(k) !== -1; });
+    if (lacking.length === p.keys.length) r = { returnValue: false, errorText: 'There is no matched result from DB' };
+    else if (lacking.length) { r.returnValue = false; r.errorKey = lacking; }
   } else if (uri === 'com.webos.service.settings/setSystemSettings') {
     if ((tv.settingsWriteFails && p.settings.screenSaverEnabled === undefined) ||
         (tv.saverWriteFails && p.settings.screenSaverEnabled !== undefined)) {
@@ -734,6 +738,32 @@ step('webOS 9 and later never restart sam, even where both rereads fail (#366)',
     assert.strictEqual(tv.events.indexOf('restart'), -1);
     assert.ok(!taken());
     done();
+  });
+});
+
+step('a TV without a setting asked for, as webOS 6 has no defaultApps, still finishes a switch-off and a start', function (done) {
+  start(null, { webosVersion: '6.5.3' });
+  tv.lacksKeys = ['defaultApps'];
+  delete tv.settings.defaultApps;
+  home.enable(function (r) {
+    assert.ok(r.ok, r.error);
+    home.disable(function (r2) {
+      assert.ok(r2.ok, r2.error);
+      home.status(function (st) {
+        assert.strictEqual(st.restorePending, false, 'not left as an incomplete restoration');
+        // A restoration an earlier build left pending is finished at start.
+        start({ enabled: false, restorePending: true }, { webosVersion: '6.5.3' });
+        tv.lacksKeys = ['defaultApps'];
+        delete tv.settings.defaultApps;
+        home.start();
+        wait(50, function () {
+          home.status(function (st2) {
+            assert.strictEqual(st2.restorePending, false, 'finished at start');
+            done();
+          });
+        });
+      });
+    });
   });
 });
 
