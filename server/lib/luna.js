@@ -282,6 +282,19 @@ Subscription.prototype._spawn = function () {
   });
 };
 
+/*
+ * A stopped service sends one "is not running" reply and then nothing, while
+ * luna-send stays connected (seen after a sam restart on webOS 6.5.3). End it
+ * so it is subscribed again; any other reply resets the retry delay.
+ */
+Subscription.prototype._served = function (r) {
+  if (r && r.returnValue === false && /is not running/i.test(String(r.errorText || ''))) {
+    if (this.child) this.child.kill();
+    return;
+  }
+  this.retryMs = 1000;
+};
+
 Subscription.prototype._consume = function (chunk) {
   var i, start = -1, depth = 0, quoted = false, escaped = false, ch, raw;
   this.buffer += chunk;
@@ -305,6 +318,7 @@ Subscription.prototype._consume = function (chunk) {
         try {
           var parsed = JSON.parse(raw);
           if (this.handlers.message) this.handlers.message(parsed);
+          this._served(parsed);
         } catch (e) {
           if (this.handlers.error) this.handlers.error(e, raw);
         }

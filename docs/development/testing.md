@@ -54,6 +54,8 @@ The worker itself stays Python 2.7 compatible for the TV.
 
 `test-home-picture.js` reads a G3's receiver files with Glasshouse Home on screen: the signal and HDR of the input behind it, the picture mode asked for with both input and dynamic range, an empty input, and HDR from the receiver's packets (PQ, HLG, none, Dolby Vision). Only the mode for the range coming in is asked for, none without a signal, and a channel's SDR mode. It also checks that tracking runs only while Glasshouse Home, picture details and the TV are all on, that it retains an app's first video before any app plate is read, and that standby or switching either off stops it and leaves the recorded video available.
 
+`test-luna-subscription.js` checks that a subscription whose service stops, as sam does when restarted, is subscribed again, and that other refusals leave it running.
+
 `test-routes.js` checks that an upload aborted before its file opens leaves no staged file, including a disconnect while disk space is being reserved.
 
 The Home suite also checks auto-launch restoration with a delayed settings
