@@ -1723,6 +1723,8 @@ function startGlasshouseHome() {
     webosVersion: telemetry.detectWebosVersion(),
     port: CONFIG.port,
     samrescan: samrescan,
+    getJson: fetchLib.getJson,
+    download: fetchLib.download,
     // Only to remove the separate app earlier builds installed.
     installApp: function (action, cb) { tvApp(action, cb, 'home-app'); },
     setHomeKey: remoteKeys.setHome,

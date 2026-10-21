@@ -1251,7 +1251,7 @@ feature off, or `tvwebctl restore-home` before uninstalling, deletes the webOS
 ## Glasshouse Home
 
 `lib/home.js` runs a home screen of Glasshouse's own in place of LG's, opt-in
-from the dashboard's Home tab (webOS 9; webOS 10 and 11 with `allowExperimentalHome`). The view is `assets/home.html`,
+from the dashboard's Home tab (webOS 9 and 10; webOS 6 to 8 and 11 with `allowExperimentalHome`, the tab's beta switch, which puts LG's Home back when switched off). The view is `assets/home.html`,
 opened by a small web app whose files are `assets/home-app/index.html` and its
 icons.
 
@@ -1271,7 +1271,9 @@ stages it in `/var/lib/tvweb/home-takeover` with an `appinfo.json` naming
 as LG's has it), bind-mounts the directory over
 `/usr/palm/applications/com.webos.app.home`, and has sam read it again
 (`lib/samrescan.js`): with the nudge on webOS 9, and with a block and release
-of the one app on webOS 10, which ignores the nudge. On webOS 10 the Home
+of the one app on webOS 10, which ignores the nudge. webOS 6 to 8 have sam
+restarted where they have neither, as a C1 on webOS 6.5.3 does; webOS 9 and
+later never restart it for Glasshouse Home (#366). On webOS 10 the Home
 button opens the default app of the `home` category, which sam takes from that
 `appCategory`; without it the button does nothing
 ([research](development/TV-RESEARCH.md#glasshouse-home-on-webos-10-g5-webos-1031)).
@@ -1400,6 +1402,27 @@ restarted. Pictures are served only from the paths the last list named, and an
 app is opened or closed only while it is on the list. Snapshot responses use
 `private, no-store` caching. Back cancels a pending panel load; returning Home
 discards replies from the previous visit. OK acts once on release.
+
+The weather (`lib/home-weather.js`) is Open-Meteo's, read by the server
+through `lib/fetch`'s curl or wget, since node 0.12 cannot speak its TLS. The
+layout keeps the place as a name and coordinates, found with Open-Meteo's
+geocoding search through `/api/home/weather/search`, which needs the same
+rights as a layout change. `/api/home/weather` answers from a forecast kept
+for 30 minutes, which every caller shares; a failed refresh is retried after
+five minutes and the last forecast shown, marked stale, until it is six hours
+old. The view asks after each layout load and every ten minutes.
+
+A picture of the day (`lib/home-daily-wallpaper.js`) takes the uploads' place
+in the wallpaper status the view reads: every slot has it, and its revision
+changes with each picture. Each provider is asked what its picture is (Bing's
+archive JSON, Wikipedia's featured feed for Commons), and an id from that
+answer decides whether anything is downloaded. Pictures are kept blue-green in
+two slots, `wallpaper-a` and `wallpaper-b`: a new picture or a preview goes
+into the one that is not the wallpaper, is kept only if it starts as a JPEG or
+PNG and is at most 20 MB, and `state.json` then names it the wallpaper and the
+old one is deleted. A fetch that fails or is cut short so never touches the
+wallpaper, and fetches run one at a time. The source and provider are in
+`home.json`.
 
 ## Apps kept ready in the background
 

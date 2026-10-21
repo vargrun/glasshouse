@@ -972,6 +972,13 @@
 <section class="priv panel" id="homepane" role="tabpanel" hidden>
   <div class="pv-note warn" data-t="home.experimental">Experimental. Glasshouse Home replaces LG's Home screen with Glasshouse's own. It has been tried on webOS 9 only. In the first half minute after the TV starts from cold, Home shows a message that Glasshouse Home is starting.</div>
   <div class="prot-table">
+    <div class="prot-row" id="home-beta-row" hidden>
+      <div class="prot-main">
+        <div class="prot-title" data-t="home.beta">Beta on this TV</div>
+        <div class="prot-desc" data-t="home.betaDesc">Glasshouse Home has not been tried on this TV&rsquo;s webOS version. The beta offers it here. Switching the beta off puts LG&rsquo;s Home back at once, as does Use LG Home.</div>
+      </div>
+      <div class="prot-status"><button type="button" class="pill idle" id="home-beta" onclick="homeBeta()">&mdash;</button></div>
+    </div>
     <div class="prot-row">
       <div class="prot-main">
         <div class="prot-title" id="home-state">&mdash;</div>
@@ -1012,7 +1019,78 @@
     <button type="button" id="home-col-reset" onclick="homeSaveLayout({ colours: null })" data-t="home.colours.reset">Use the default colours</button>
   </div>
 
+  <div class="grp grp-sec" data-t="home.dateFormat.title">Date</div>
+  <div class="sub" data-t="home.dateFormat.desc">How the date under the clock is written. In braces: {weekday} for the day&rsquo;s name, {day}, {month:no} for the month&rsquo;s number, {month:str} for its name, and {year}. Names are in the TV&rsquo;s language.</div>
+  <div class="home-date-presets" id="home-date-presets"></div>
+  <form class="home-date-form" onsubmit="event.preventDefault(); homeSaveDateFormat()">
+    <input type="text" id="home-date-format" maxlength="40" spellcheck="false" autocomplete="off" oninput="renderHomeDatePreview()" aria-label="Date format" data-t-aria-label="home.dateFormat.label">
+    <button type="submit" id="home-date-save" data-t="home.dateFormat.save">Save</button>
+    <button type="button" id="home-date-reset" onclick="homeSaveLayout({ dateFormat: null })" data-t="home.dateFormat.reset">Use the default</button>
+  </form>
+  <div class="sub" id="home-date-preview"></div>
+
+  <div class="grp grp-sec" data-t="home.weather.title">Weather</div>
+  <div class="sub" data-t="home.weather.desc">Now, tomorrow and the day after, in the top right of Glasshouse Home: beside the clock, or under the picture details while they show. The TV asks Open-Meteo, a free weather service, for the chosen place every 30 minutes; nothing is sent while this is off.</div>
+  <div class="prot-table">
+    <div class="prot-row">
+      <div class="prot-main">
+        <div class="prot-title" data-t="home.weather.show">Show the weather</div>
+        <div class="prot-desc" id="home-wx-place">&mdash;</div>
+      </div>
+      <div class="prot-status"><button type="button" class="pill idle" id="home-wx-on" onclick="homeWeatherSwitch()">&mdash;</button></div>
+    </div>
+    <div class="prot-row">
+      <div class="prot-main">
+        <div class="prot-title" data-t="home.weather.showPlace">Show the place&rsquo;s name</div>
+        <div class="prot-desc" data-t="home.weather.showPlaceDesc">Before the conditions, as &ldquo;Sarajevo&rdquo;.</div>
+      </div>
+      <div class="prot-status"><button type="button" class="pill idle" id="home-wx-name" onclick="homeSaveLayout({ weather: { showPlace: !homeLayout.weather.showPlace } })">&mdash;</button></div>
+    </div>
+    <div class="prot-row">
+      <div class="prot-main"><div class="prot-title" data-t="home.weather.units">Temperature</div></div>
+      <div class="prot-status">
+        <select id="home-wx-units" class="pill-sel" onchange="homeSaveLayout({ weather: { units: this.value } })">
+          <option value="c" data-t="home.weather.celsius">°C</option>
+          <option value="f" data-t="home.weather.fahrenheit">°F</option>
+        </select>
+      </div>
+    </div>
+  </div>
+  <form class="home-date-form" onsubmit="event.preventDefault(); homeWeatherSearch()">
+    <input type="search" id="home-wx-q" maxlength="60" autocomplete="off" placeholder="City or town" data-t-placeholder="home.weather.find" aria-label="City or town" data-t-aria-label="home.weather.find">
+    <button type="submit" id="home-wx-search" data-t="home.weather.search">Search</button>
+  </form>
+  <div class="prot-table" id="home-wx-results" hidden></div>
+
   <div class="grp grp-sec" data-t="home.wall.title">Wallpaper</div>
+  <div class="home-upload">
+    <label for="home-wall-source" data-t="home.wall.source">Source</label>
+    <select id="home-wall-source" class="pill-sel" onchange="homeWallSourceChosen(this.value)">
+      <option value="mine" data-t="home.wall.sourceMine">My images, one for each time of day</option>
+      <option value="daily" data-t="home.wall.sourceDaily">Picture of the day</option>
+    </select>
+  </div>
+  <div class="sub" id="home-wall-now" role="status"></div>
+  <div id="home-wall-daily" hidden>
+    <div class="home-upload">
+      <label for="home-wall-provider" data-t="home.wall.provider">Provider</label>
+      <select id="home-wall-provider" class="pill-sel" onchange="homeWallPreview(this.value)">
+        <option value="bing" data-t="home.wall.bing">Bing</option>
+        <option value="wikimedia" data-t="home.wall.wikimedia">Wikimedia Commons</option>
+      </select>
+    </div>
+    <div class="sub" data-t="home.wall.dailyDesc">The TV looks for the provider's new picture every hour and changes the wallpaper when there is one. It is dimmed by time of day as uploaded images are. Uploaded images are kept, for switching back to them.</div>
+    <figure class="home-wall-pod" id="home-wall-pod" hidden>
+      <img id="home-wall-pod-img" alt="">
+      <figcaption>
+        <div class="prot-title" id="home-wall-pod-title"></div>
+        <div class="prot-desc" id="home-wall-pod-credit"></div>
+        <div class="sub" id="home-wall-pod-state"></div>
+      </figcaption>
+    </figure>
+    <div class="btns" style="max-width:240px"><button type="button" id="home-wall-apply" onclick="homeWallApply()" data-t="home.wall.apply">Use this picture</button></div>
+  </div>
+  <div id="home-wall-mine">
   <div class="sub" data-t="home.wall.optional">Optional: upload an image for each time of day. A time of day without one has a black background.</div>
   <div class="home-upload">
     <label for="home-wall-slot" data-t="home.wall.slot">Time of day</label>
@@ -1029,6 +1107,7 @@
   <div class="sub" data-t="home.wall.uploadHelp">JPEG, PNG or WebP, up to 25 MB. Images are resized to fit 1920 × 1080, the size Glasshouse Home is drawn at, before upload, and fill the screen.</div>
   <div class="sub" id="home-wall-upload-note" role="status"></div>
   <div class="home-walls" id="home-walls"></div>
+  </div>
   </div>
 </section>
 

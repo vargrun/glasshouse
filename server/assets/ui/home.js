@@ -4,7 +4,7 @@ let homeStatus = null;
 let homeCat = null;      // what the TV's Home lists: apps, devices, picked channels, order
 let homeLayout = null;
 let homeChannels = null; // the TV's whole channel list, for picking
-let homeArmed = null;    // the control waiting for its second press: 'on', 'off' or 'hide'
+let homeArmed = null;    // the control waiting for its second press: 'on', 'off', 'hide' or 'beta'
 let homeArmTimer = null;
 let homeSaving = false;
 let homeLoadRevision = 0;
@@ -87,6 +87,17 @@ function renderHome() {
     state.textContent = t('home.isOff', 'LG’s Home is the TV’s Home');
     desc.textContent = t('home.isOffDesc', 'Nothing of LG’s is changed: Glasshouse Home is laid over LG’s Home while on, and switching off takes it away.');
   }
+  const betaRow = q('home-beta-row');
+  if (betaRow) betaRow.hidden = st.supported.beta !== true;
+  const beta = q('home-beta');
+  if (beta) {
+    const armed = homeArmed === 'beta';
+    updateToggle(beta, {
+      cls: armed ? 'warn' : st.beta ? 'good' : 'idle',
+      label: armed ? t('home.betaConfirm', 'Press again to switch on') : st.beta ? t('common.on', 'On') : t('common.off', 'Off')
+    });
+    beta.disabled = homeSaving || st.writable === false;
+  }
   const more = q('home-more');
   if (more) more.hidden = !st.supported.ok;
   const hideRow = q('home-hide-lg-row');
@@ -124,6 +135,8 @@ function renderHome() {
   renderHomeChannels();
   renderHomeWalls();
   renderHomeColours();
+  renderHomeDate();
+  renderHomeWeather();
   q('home-reset').disabled = !homeWritable();
 }
 
@@ -166,6 +179,119 @@ function renderHomeColours() {
   [text, accent].forEach(el => { if (el) el.disabled = !can; });
   const reset = q('home-col-reset');
   if (reset) reset.disabled = !can || !(homeLayout && homeLayout.colours);
+}
+
+// A date format filled in as Glasshouse Home fills it, with this browser's names for the preview.
+function homeDateText(format, d) {
+  const names = { '{weekday}': d.toLocaleDateString(undefined, { weekday: 'long' }), '{day}': d.getDate(),
+    '{month:no}': d.getMonth() + 1, '{month:str}': d.toLocaleDateString(undefined, { month: 'long' }), '{year}': d.getFullYear() };
+  return format.replace(/\{[^{}]*\}/g, token => names[token] === undefined ? token : String(names[token]));
+}
+
+// The presets as buttons showing today's date in each; the field keeps what is being typed.
+function renderHomeDate() {
+  const box = q('home-date-presets');
+  if (!box || !homeStatus) return;
+  const now = (homeLayout && homeLayout.dateFormat) || null;
+  const can = homeWritable() && !homeSaving;
+  const today = new Date();
+  const presets = [null].concat(homeStatus.datePresets || []);
+  box.innerHTML = presets.map((f, i) => `<button type="button" class="pill${f === now ? ' good' : ' idle'}" aria-pressed="${f === now}"
+      onclick="homeDatePreset(${i})" ${can ? '' : 'disabled'}>${esc(f ? homeDateText(f, today) : t('home.dateFormat.default', 'Default'))}</button>`).join('');
+  const field = q('home-date-format');
+  if (field && document.activeElement !== field) field.value = now || '';
+  if (field) {
+    field.disabled = !can;
+    field.placeholder = '{weekday} {day}. {month:str} {year}';
+  }
+  q('home-date-save').disabled = !can;
+  q('home-date-reset').disabled = !can || !now;
+  renderHomeDatePreview();
+}
+
+function renderHomeDatePreview() {
+  const field = q('home-date-format'), out = q('home-date-preview');
+  if (!field || !out) return;
+  const f = field.value.trim();
+  out.textContent = f ? t('home.dateFormat.preview', 'Today: {date}', { date: homeDateText(f, new Date()) }) : '';
+}
+
+// "Sarajevo, Federacija Bosne i Hercegovine, Bosna i Hercegovina", as the search gives it.
+function homePlaceName(p) {
+  return [p.name, p.region, p.country].filter(Boolean).join(', ');
+}
+
+let homeWxPlaces = [];
+
+function renderHomeWeather() {
+  const btn = q('home-wx-on');
+  if (!btn || !homeLayout) return;
+  const w = homeLayout.weather || { on: false, place: null, units: 'c' };
+  const can = homeWritable() && !homeSaving;
+  updateToggle(btn, { cls: w.on ? 'good' : 'idle', label: w.on ? t('common.on', 'On') : t('common.off', 'Off') });
+  btn.disabled = !can || (!w.on && !w.place);
+  q('home-wx-place').textContent = w.place
+    ? t('home.weather.place', 'For {place}', { place: homePlaceName(w.place) })
+    : t('home.weather.noPlace', 'Search for a place below first.');
+  const name = q('home-wx-name');
+  updateToggle(name, { cls: w.showPlace ? 'good' : 'idle', label: w.showPlace ? t('common.on', 'On') : t('common.off', 'Off') });
+  name.disabled = !can;
+  const units = q('home-wx-units');
+  units.value = w.units;
+  units.disabled = !can;
+  q('home-wx-q').disabled = !can;
+  q('home-wx-search').disabled = !can;
+}
+
+function homeWeatherSwitch() {
+  const w = homeLayout.weather;
+  homeSaveLayout({ weather: { on: !w.on } });
+}
+
+// The TV asks Open-Meteo, so the browser never contacts it; names in the browser's language where it has them.
+async function homeWeatherSearch() {
+  const name = q('home-wx-q').value.trim();
+  const box = q('home-wx-results');
+  if (!name) return;
+  box.hidden = false;
+  box.innerHTML = `<div class="sub">${esc(t('home.weather.searching', 'Searching…'))}</div>`;
+  const lang = String(navigator.language || 'en').split('-')[0].toLowerCase();
+  try {
+    const r = await homeGet('/api/home/weather/search?q=' + encodeURIComponent(name) + '&lang=' + encodeURIComponent(lang));
+    homeWxPlaces = r.places || [];
+  } catch (e) {
+    homeWxPlaces = [];
+    box.innerHTML = `<div class="sub">${esc(e.message)}</div>`;
+    return;
+  }
+  if (!homeWxPlaces.length) {
+    box.innerHTML = `<div class="sub">${esc(t('home.weather.noMatch', 'No place by that name.'))}</div>`;
+    return;
+  }
+  box.innerHTML = homeWxPlaces.map((p, i) => `<div class="prot-row">
+      <div class="prot-main"><div class="prot-title">${esc(p.name)}</div>
+        <div class="prot-desc">${esc([p.region, p.country].filter(Boolean).join(', '))}</div></div>
+      <div class="prot-status"><button type="button" class="pill idle" onclick="homeWeatherPick(${i})">${esc(t('home.weather.use', 'Use'))}</button></div>
+    </div>`).join('');
+}
+
+// A place picked switches the weather on, which is why it was searched for.
+async function homeWeatherPick(i) {
+  const place = homeWxPlaces[i];
+  if (!place) return;
+  q('home-wx-results').hidden = true;
+  q('home-wx-q').value = '';
+  await homeSaveLayout({ weather: { place, on: true } });
+}
+
+// 0 is the default; the rest are the server's presets, in its order.
+function homeDatePreset(i) {
+  homeSaveLayout({ dateFormat: i === 0 ? null : homeStatus.datePresets[i - 1] });
+}
+
+function homeSaveDateFormat() {
+  const f = q('home-date-format').value.trim();
+  homeSaveLayout({ dateFormat: f || null });
 }
 
 function homeCustomColours() {
@@ -330,6 +456,27 @@ async function homeHideLg() {
   loadHome();
 }
 
+// Switching the beta on takes a second press; off puts LG's Home back, so it needs none.
+async function homeBeta() {
+  if (homeSaving || homeStatus.writable === false) return;
+  const want = !homeStatus.beta;
+  if (want && homeArmed !== 'beta') {
+    homeArmed = 'beta';
+    clearTimeout(homeArmTimer);
+    homeArmTimer = setTimeout(() => { homeArmed = null; renderHome(); }, 5000);
+    return renderHome();
+  }
+  homeArmed = null;
+  clearTimeout(homeArmTimer);
+  homeSaving = true;
+  renderHome();
+  try {
+    await homePost('/api/home/beta', { allow: want });
+  } catch (e) { showErr(e.message); }
+  homeSaving = false;
+  loadHome();
+}
+
 function homePicture() {
   homeSaveLayout({ picture: homeLayout.picture !== true });
 }
@@ -389,7 +536,9 @@ function homeToggleChannel(id) {
 function renderHomeWalls() {
   const box = q('home-walls');
   if (!box) return;
-  const walls = homeStatus.wallpapers || {};
+  renderHomeWallSource();
+  // The uploads' own state: while a picture of the day is the wallpaper, the status's own is that picture's.
+  const walls = (homeStatus.wallpapers && homeStatus.wallpapers.mine) || homeStatus.wallpapers || {};
   const busy = !homeWritable() || homeWallUploading || walls.uploading;
   q('home-wall-slot').disabled = busy;
   q('home-wall-file').disabled = busy;
@@ -409,8 +558,106 @@ function renderHomeWalls() {
   ];
   box.innerHTML = slots.map(([key, label]) => `<figure class="home-wall">
     ${walls.slots && !walls.slots[key] ? `<div class="home-wall-empty">${esc(t('home.wall.black', 'Black'))}</div>`
-      : `<img src="${esc(api('/api/home/wallpaper?slot=' + key + '&v=' + encodeURIComponent(walls.revision || '')))}" alt="" loading="lazy">`}
+      : `<img src="${esc(api('/api/home/wallpaper?mine=1&slot=' + key + '&v=' + encodeURIComponent(walls.revision || '')))}" alt="" loading="lazy">`}
     <figcaption class="sub">${esc(label)}</figcaption></figure>`).join('');
+}
+
+// ---------------------------------------------------------------- picture of the day
+
+const HOME_WALL_PROVIDERS = () => ({
+  bing: t('home.wall.bing', 'Bing'),
+  wikimedia: t('home.wall.wikimedia', 'Wikimedia Commons')
+});
+// What the section shows, which can differ from what is saved until a picture is applied.
+let homeWallChoice = null;   // { source, provider }
+let homeWallLooked = null;   // { provider, picture } or { provider, loading } or { provider, error }
+
+function homeWallSaved() {
+  const w = (homeStatus && homeStatus.wallpapers) || {};
+  return { source: w.source || 'mine', provider: w.provider || 'bing', daily: w.daily || null };
+}
+
+function renderHomeWallSource() {
+  const saved = homeWallSaved();
+  if (!homeWallChoice) homeWallChoice = { source: saved.source, provider: saved.provider };
+  const can = homeWritable() && !homeSaving;
+  const choice = homeWallChoice, names = HOME_WALL_PROVIDERS();
+  q('home-wall-source').value = choice.source;
+  q('home-wall-source').disabled = !can;
+  q('home-wall-provider').value = choice.provider;
+  q('home-wall-provider').disabled = !can;
+  q('home-wall-daily').hidden = choice.source !== 'daily';
+  q('home-wall-mine').hidden = choice.source === 'daily';
+  q('home-wall-now').textContent = saved.source === 'daily'
+    ? t('home.wall.nowDaily', 'Now: {provider}\u2019s picture of the day.', { provider: names[saved.provider] || saved.provider })
+    : t('home.wall.nowMine', 'Now: the uploaded images.');
+  // The applied provider shows the wallpaper as it is; another shows its preview.
+  const applied = saved.source === 'daily' && saved.provider === choice.provider && saved.daily && saved.daily.provider === choice.provider;
+  const looked = homeWallLooked && homeWallLooked.provider === choice.provider ? homeWallLooked : null;
+  const fig = q('home-wall-pod'), img = q('home-wall-pod-img'), state = q('home-wall-pod-state');
+  const pic = applied ? saved.daily : looked && looked.picture;
+  fig.hidden = choice.source !== 'daily' || (!pic && !looked);
+  if (pic) {
+    const src = applied ? '/api/home/wallpaper/daily?which=current' : '/api/home/wallpaper/daily?which=preview&provider=' + choice.provider;
+    const want = api(src + '&v=' + encodeURIComponent(pic.revision || ''));
+    if (img.dataset.src !== want) { img.dataset.src = want; img.src = want; }
+    img.hidden = false;
+    q('home-wall-pod-title').textContent = pic.title || names[choice.provider];
+    q('home-wall-pod-credit').textContent = pic.credit || '';
+    state.textContent = applied ? t('home.wall.applied', 'On Glasshouse Home now.') : t('home.wall.preview', 'A preview: not on Glasshouse Home until applied.');
+  } else {
+    img.hidden = true;
+    q('home-wall-pod-title').textContent = names[choice.provider];
+    q('home-wall-pod-credit').textContent = '';
+    state.textContent = looked && looked.loading ? t('home.wall.fetching', 'Fetching today\u2019s picture…') : looked && looked.error || '';
+  }
+  const apply = q('home-wall-apply');
+  apply.parentElement.hidden = choice.source !== 'daily' || applied;
+  apply.disabled = !can || !(looked && looked.picture);
+}
+
+// Choosing My images switches back at once; choosing the picture of the day previews before it applies.
+function homeWallSourceChosen(source) {
+  homeWallChoice = { source, provider: homeWallChoice ? homeWallChoice.provider : homeWallSaved().provider };
+  if (source === 'mine') {
+    if (homeWallSaved().source !== 'mine') return homeSetWallpaper({ source: 'mine' });
+    return renderHomeWallSource();
+  }
+  homeWallPreview(homeWallChoice.provider);
+}
+
+async function homeWallPreview(provider) {
+  homeWallChoice = { source: 'daily', provider };
+  const saved = homeWallSaved();
+  if (saved.source === 'daily' && saved.provider === provider && saved.daily) return renderHomeWallSource();
+  homeWallLooked = { provider, loading: true };
+  renderHomeWallSource();
+  try {
+    const r = await homeGet('/api/home/wallpaper/daily/preview?provider=' + encodeURIComponent(provider));
+    if (homeWallChoice.provider === provider) homeWallLooked = { provider, picture: r.picture };
+  } catch (e) {
+    if (homeWallChoice.provider === provider) homeWallLooked = { provider, error: e.message };
+  }
+  renderHomeWallSource();
+}
+
+async function homeSetWallpaper(body) {
+  if (!homeWritable()) return;
+  homeSaving = true;
+  renderHome();
+  try {
+    await homePost('/api/home/wallpapers', body);
+  } catch (e) { showErr(e.message); }
+  homeSaving = false;
+  await loadHome();
+}
+
+async function homeWallApply() {
+  const provider = homeWallChoice.provider;
+  q('home-wall-pod-state').textContent = t('home.wall.applying', 'Applying…');
+  await homeSetWallpaper({ source: 'daily', provider });
+  homeWallLooked = null;
+  renderHomeWallSource();
 }
 
 async function homeUploadWall() {

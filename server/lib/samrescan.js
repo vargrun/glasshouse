@@ -36,9 +36,15 @@
  * false it blocks and releases as on webOS 10. It goes only where the TV's own
  * schema names it, since older firmware has not been tried with it.
  *
+ * A C1 on webOS 6.5.3 has neither: configd reports profile.blockedAppList
+ * missing and sam answers blockSystemApp as an unknown method. There restart()
+ * restarts sam, as lib/apps.js does for hidden tiles, for the callers that
+ * accept one.
+ *
  * Strict ES5: runs on node 0.12.
  */
 var fs = require('fs');
+var execFile = require('child_process').execFile;
 var BLOCK_SCHEMA = '/etc/palm/schemas/sam/applicationManager.blockSystemApp.schema';
 var KEY = 'profile.blockedAppList';
 // Not an app: blocking it blocks nothing.
@@ -46,6 +52,19 @@ var NUDGE_ID = 'io.github.rorygallagher2024.lg-webos-dashboard.rescan';
 var NUDGE_MS = 1500;
 var CHECK_POLL_MS = 500;
 var CHECK_POLLS = 16;
+// sam can take most of a minute to stop every app in its cgroup.
+var RESTART_POLLS = 60;
+var RESTART_SETTLE_MS = 3000;
+// sam and every unit that requires it, as lib/apps.js lists them.
+var SAM_UNITS = 'sam.service $(systemctl list-dependencies --reverse --plain --no-legend sam.service 2>/dev/null | ' +
+                'sed -n "s/^[^A-Za-z0-9]*\\([A-Za-z0-9@._-]*\\.service\\)$/\\1/p")';
+// The restart lib/apps.js restartSamNow runs, start limits cleared first.
+var RESTART_CMD = 'systemctl reset-failed ' + SAM_UNITS + ' >/dev/null 2>&1 || true; ' +
+                  'killall -9 LunaExecutable >/dev/null 2>&1 || true; ' +
+                  'systemctl kill -s 9 sam.service >/dev/null 2>&1 || systemctl restart --no-block sam >/dev/null 2>&1 || true';
+// Units that require sam and were refused while it restarted, eim (the inputs) among them.
+var START_FAILED_CMD = 'for u in ' + SAM_UNITS + '; do if systemctl is-failed --quiet "$u"; then ' +
+                       'echo "$u"; systemctl reset-failed "$u"; systemctl start --no-block "$u"; fi; done';
 
 var lunaFn = null;
 var supported = null;
@@ -53,6 +72,8 @@ var blockSchema = BLOCK_SCHEMA;
 var forceParam = null;   // whether the block needs forceBlockSystemApp, read once
 var running = false;
 var waiting = [];
+var execFn = execFile;
+var restartSettleMs = RESTART_SETTLE_MS;
 
 function init(opts) {
   opts = opts || {};
@@ -62,6 +83,8 @@ function init(opts) {
   if (opts.blockSchema) blockSchema = opts.blockSchema;
   if (opts.nudgeMs !== undefined) NUDGE_MS = opts.nudgeMs;
   if (opts.pollMs !== undefined) CHECK_POLL_MS = opts.pollMs;
+  if (opts.exec) execFn = opts.exec;
+  if (opts.restartSettleMs !== undefined) restartSettleMs = opts.restartSettleMs;
 }
 
 function readList(cb) {
@@ -151,15 +174,15 @@ function refresh(check, cb) {
 }
 
 // cb(true) once check(done) says the change has taken, cb(false) after
-// CHECK_POLLS polls without it. No check: cb(true) at once.
-function waitFor(check, what, cb) {
+// CHECK_POLLS polls (or maxPolls) without it. No check: cb(true) at once.
+function waitFor(check, what, cb, maxPolls) {
   if (!check) return cb(true);
   var polls = 0;
   (function poll() {
     polls++;
     check(function (done) {
       if (done) return cb(true);
-      if (polls >= CHECK_POLLS) {
+      if (polls >= (maxPolls || CHECK_POLLS)) {
         console.log('samrescan: sam had not caught up after ' + what);
         return cb(false);
       }
@@ -228,11 +251,40 @@ function rereadApp(appId, check, cb) {
   });
 }
 
+/*
+ * Restarts sam so it reads every appinfo.json again, then waits until
+ * check(done) says the change has taken. The restart closes the app in front,
+ * so it is opened again, as lib/apps.js does, unless it was Home or the screen
+ * saver. On a C1 (webOS 6.5.3) sam reported a remounted Home within 3 s, eim
+ * kept running and LG's Home process went with the restart.
+ */
+function restart(check, cb) {
+  if (!lunaFn) return cb(false);
+  lunaFn('com.webos.applicationManager/getForegroundAppInfo', {}, function (fg) {
+    var front = fg && typeof fg.appId === 'string' ? fg.appId : '';
+    console.log('samrescan: restarting sam, which has no other way to read its apps again');
+    execFn('/bin/sh', ['-c', RESTART_CMD], { timeout: 6000 }, function (err) {
+      if (err) console.error('samrescan: restarting sam: ' + err.message);
+      setTimeout(function () {
+        waitFor(check, 'the restart', function (ok) {
+          execFn('/bin/sh', ['-c', START_FAILED_CMD], { timeout: 6000 }, function (e, out) {
+            var started = String(out || '').trim();
+            if (started) console.log('samrescan: started again after sam restarted: ' + started.split(/\s+/).join(', '));
+            if (!front || front === 'com.webos.app.home' || front === 'com.webos.app.screensaver') return cb(ok);
+            lunaFn('com.webos.applicationManager/launch', { id: front }, function () { cb(ok); });
+          });
+        }, RESTART_POLLS);
+      }, restartSettleMs);
+    });
+  });
+}
+
 module.exports = {
   init: init,
   refresh: refresh,
   canNudge: canNudge,
   rereadApp: rereadApp,
+  restart: restart,
   KEY: KEY,
   NUDGE_ID: NUDGE_ID
 };

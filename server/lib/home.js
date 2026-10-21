@@ -33,6 +33,11 @@ var wallpapers = require('./home-wallpapers');
 var takeover = require('./home-takeover');
 var recent = require('./home-recent');
 var recentApps = require('./home-recent-apps');
+var weatherModule = require('./home-weather');
+var daily = require('./home-daily-wallpaper');
+// How often a picture of the day is looked for again: Bing and Wikimedia change once a day.
+var DAILY_CHECK_MS = 60 * 60 * 1000;
+var dailyTimer = null;
 
 // The separate app earlier builds installed: removed, and its settings undone.
 var HOME_APP = 'com.tvweb.home';
@@ -88,6 +93,16 @@ var COLOUR_PRESETS = [
   { id: 'lilac', text: '#e0d9f6', accent: '#a98ff0' }
 ];
 var COLOUR_RE = /^#[0-9a-f]{6}$/;
+
+/*
+ * The date under the clock: text with placeholders, or null for the
+ * translation's own order of the weekday, day and month. The TV app steps
+ * through the presets; the browser dashboard takes any format.
+ */
+var DATE_TOKENS = ['{weekday}', '{day}', '{month:no}', '{month:str}', '{year}'];
+var DATE_FORMAT_MAX = 40;
+var DATE_PRESETS = ['{weekday} {day}. {month:str}', '{day}. {month:str} {year}', '{weekday}, {day}.{month:no}.{year}',
+                    '{day}.{month:no}.{year}'];
 
 // The settings earlier builds changed, as their snapshot kept them.
 var LEGACY_INPUT_KEYS = ['lastInputApp', 'physicalLastInputApp'];
@@ -207,8 +222,13 @@ function defaults() {
     picture: false,
     // { text, accent } as #rrggbb, or null for the view's own colours.
     colours: null,
+    dateFormat: null,
+    // Off until a place is chosen and it is switched on (lib/home-weather).
+    weather: weatherModule.validSettings(null),
     // null until chosen: the first start keeps an empty layout an earlier build left.
     hideLgHomeAtStart: null,
+    // The uploaded pictures ('mine') or a picture of the day from a provider (lib/home-daily-wallpaper).
+    wallpaper: { source: 'mine', provider: 'bing' },
     // LG's Home auto launch as it was before Glasshouse Home switched it off,
     // null while it has not, and LG's mark of whether the owner chose it.
     lgAutoLaunch: null,
@@ -250,6 +270,10 @@ function normalise(raw) {
   d.hintSeen = raw.hintSeen === true;
   d.picture = raw.picture === true;
   d.colours = validColours(raw.colours);
+  d.dateFormat = validDateFormat(raw.dateFormat);
+  d.weather = weatherModule.validSettings(raw.weather);
+  var wp = raw.wallpaper && typeof raw.wallpaper === 'object' ? raw.wallpaper : {};
+  d.wallpaper = { source: wp.source === 'daily' ? 'daily' : 'mine', provider: daily.validProvider(wp.provider) || 'bing' };
   if (typeof raw.hideLgHomeAtStart === 'boolean') d.hideLgHomeAtStart = raw.hideLgHomeAtStart;
   if (typeof raw.lgAutoLaunch === 'string' && raw.lgAutoLaunch) d.lgAutoLaunch = raw.lgAutoLaunch;
   if (typeof raw.lgAutoLaunchCheck === 'string' && raw.lgAutoLaunchCheck) d.lgAutoLaunchCheck = raw.lgAutoLaunchCheck;
@@ -261,6 +285,15 @@ function validColours(v) {
   if (!v || typeof v.text !== 'string' || typeof v.accent !== 'string') return null;
   var text = v.text.toLowerCase(), accent = v.accent.toLowerCase();
   return COLOUR_RE.test(text) && COLOUR_RE.test(accent) ? { text: text, accent: accent } : null;
+}
+
+// A format of at most DATE_FORMAT_MAX characters whose braces are all placeholders, or null.
+function validDateFormat(v) {
+  if (typeof v !== 'string') return null;
+  var f = v.trim();
+  if (!f || f.length > DATE_FORMAT_MAX) return null;
+  var rest = f.replace(/\{[^{}]*\}/g, function (token) { return DATE_TOKENS.indexOf(token) === -1 ? '{' : ''; });
+  return /[{}]/.test(rest) ? null : f;
 }
 
 function validSnapshot(s) {
@@ -337,6 +370,10 @@ function perRow(sent, kept) {
 function setLayout(body, cb) {
   var c = readConfig();
   if (!body || typeof body !== 'object') return cb({ ok: false, error: 'layout expected' });
+  if (body.dateFormat !== undefined && body.dateFormat !== null && validDateFormat(body.dateFormat) === null) {
+    return cb({ ok: false, error: msg('srv.home.dateFormat', 'The date format can be up to {max} characters, with {tokens} in braces.',
+      { max: DATE_FORMAT_MAX, tokens: DATE_TOKENS.join(' ') }) });
+  }
   var next = normalise({
     enabled: c.enabled,
     restorePending: c.restorePending,
@@ -344,6 +381,8 @@ function setLayout(body, cb) {
     hideLgHomeAtStart: c.hideLgHomeAtStart,
     lgAutoLaunch: c.lgAutoLaunch,
     lgAutoLaunchCheck: c.lgAutoLaunchCheck,
+    // Set through setWallpapers, not the layout.
+    wallpaper: c.wallpaper,
     rows: body.rows !== undefined ? body.rows : c.rows,
     order: perRow(body.order, c.order),
     sort: perRow(body.sort, c.sort),
@@ -354,7 +393,11 @@ function setLayout(body, cb) {
     hintSeen: body.hintSeen !== undefined ? body.hintSeen : c.hintSeen,
     picture: typeof body.picture === 'boolean' ? body.picture : c.picture,
     // null puts the view's own colours back.
-    colours: body.colours !== undefined ? body.colours : c.colours
+    colours: body.colours !== undefined ? body.colours : c.colours,
+    // null puts the translation's order back.
+    dateFormat: body.dateFormat !== undefined ? body.dateFormat : c.dateFormat,
+    // Only the parts sent change; place null forgets the place.
+    weather: mergeWeather(c.weather, body.weather)
   });
   if (body.reset === true) {
     var d = defaults();
@@ -374,9 +417,19 @@ function setLayout(body, cb) {
   cb({ ok: true, layout: layoutOf(config), layoutVersion: layoutVersion() });
 }
 
+function mergeWeather(saved, sent) {
+  var w = copy(saved);
+  if (!sent || typeof sent !== 'object') return w;
+  if (typeof sent.on === 'boolean') w.on = sent.on;
+  if (sent.place !== undefined) w.place = sent.place;
+  if (sent.units === 'c' || sent.units === 'f') w.units = sent.units;
+  if (typeof sent.showPlace === 'boolean') w.showPlace = sent.showPlace;
+  return w;
+}
+
 function layoutOf(c) {
   return { rows: c.rows, order: c.order, sort: c.sort, hidden: c.hidden, channels: c.channels, hintSeen: c.hintSeen, picture: c.picture,
-    colours: c.colours };
+    colours: c.colours, dateFormat: c.dateFormat, weather: c.weather };
 }
 
 // ---------------------------------------------------------------- what it shows
@@ -834,9 +887,17 @@ function switchTo(on, cb) {
 
 // ---------------------------------------------------------------- settings
 
+/*
+ * A key the TV does not have is left out of the answer rather than failing the
+ * read. A C1 (webOS 6.5.3) has no defaultApps: asked for it with lastInputApp,
+ * it answers returnValue false, errorKey ["defaultApps"] and the settings it
+ * has; asked for it alone, "There is no matched result from DB".
+ */
 function readSettings(keys, cb) {
   luna(SETTINGS + 'getSystemSettings', { category: 'general', keys: keys }, function (r) {
-    cb(r && r.returnValue !== false && r.settings ? r.settings : null);
+    if (r && r.settings && (r.returnValue !== false || isArray(r.errorKey))) return cb(r.settings);
+    if (r && r.returnValue === false && /no matched result/i.test(String(r.errorText || ''))) return cb({});
+    cb(null);
   });
 }
 
@@ -874,8 +935,20 @@ function supported() {
     reason: msg('srv.home.port', 'Glasshouse Home requires the dashboard to use port 8080.') };
   if (/^9\./.test(v)) return { ok: true, webos: v };
   // LG's Home is a Flutter app there, under the same id and folder (#612).
-  // Tried on a G5 (webOS 10.3.1); webOS 11 is untried and needs the setting.
-  if (/^10\./.test(v) || (/^11\./.test(v) && allowExperimentalFn())) return { ok: true, webos: v, experimental: true };
+  // Tried on a G5 (webOS 10.3.1).
+  if (/^10\./.test(v)) return { ok: true, webos: v, experimental: true };
+  /*
+   * Untried, and offered once the owner switches the beta on. webOS 6 to 8
+   * have LG's Home as an app under the same id, a QML one with code for webOS 8
+   * in webOS 9's (TV-RESEARCH); webOS 11's is Flutter, as on webOS 10. webOS 3
+   * to 5 have no such app to take the place of: Home is surface-manager's
+   * ribbon there.
+   */
+  if (/^([678]|11)\./.test(v)) {
+    if (allowExperimentalFn()) return { ok: true, webos: v, experimental: true, beta: true };
+    return { ok: false, webos: v, beta: true,
+      reason: msg('srv.home.beta', 'Glasshouse Home has not been tried on webOS {version}. Switching on the beta offers it.', { version: v }) };
+  }
   return {
     ok: false, webos: v || null,
     reason: msg('srv.home.untested', 'Glasshouse Home has been tried only on webOS 9 and 10. This TV runs webOS {version}.', { version: v || '?' })
@@ -906,6 +979,7 @@ function enable(cb) {
     syncLgAutoLaunch();
     if (viewInFront() && powerActive) watchBeat(FIRST_BEAT_GRACE_MS);
     console.log('home: Glasshouse Home switched on');
+    checkDaily();
     cb({ ok: true });
   });
 }
@@ -1245,7 +1319,7 @@ function watchBeat(ms) {
 function beat() {
   lastBeatAt = nowMs();
   if (viewInFront()) watchBeat(BEAT_GRACE_MS);
-  return { ok: true, enabled: readConfig().enabled, build: buildId, wallpapers: wallpapers.status(),
+  return { ok: true, enabled: readConfig().enabled, build: buildId, wallpapers: wallpaperStatus(),
            layoutVersion: layoutVersion() };
 }
 
@@ -1360,8 +1434,10 @@ function status(cb) {
     cb({
       ok: true,
       // Both dashboards leave Home out where it is false, as for other features a TV lacks.
-      available: sup.ok || c.enabled || c.restorePending,
+      available: sup.ok || sup.beta === true || c.enabled || c.restorePending,
       supported: sup,
+      // On a TV it is offered on as a beta: whether the owner has switched that on.
+      beta: sup.beta === true ? allowExperimentalFn() : null,
       enabled: c.enabled,
       restorePending: c.restorePending,
       // In LG's Home's place now; false while one of the ways back has LG's Home open.
@@ -1370,8 +1446,9 @@ function status(cb) {
       hideLgHomeAtStart: c.hideLgHomeAtStart === true,
       hideLgHomeAtStartAvailable: startLayoutAvailable(),
       history: !!(historyModule && historyModule.enabled && historyModule.enabled()),
-      wallpapers: wallpapers.status(),
+      wallpapers: wallpaperStatus(),
       colourPresets: COLOUR_PRESETS,
+      datePresets: DATE_PRESETS,
       layout: layoutOf(c)
     });
   });
@@ -1390,6 +1467,8 @@ function init(opts) {
   wallpapers.init(stateDir);
   recent.init(stateDir, opts.now);
   recentApps.init({ luna: lunaFn });
+  weatherModule.init({ getJson: opts.getJson, now: opts.now });
+  daily.init({ stateDir: stateDir, getJson: opts.getJson, download: opts.download, now: opts.now });
   takeover.init({
     luna: lunaFn,
     samrescan: opts.samrescan || null,
@@ -1403,7 +1482,8 @@ function init(opts) {
     exec: opts.exec,
     kill: opts.kill,
     blankAtStart: function () { return startLayoutAvailable() && readConfig().hideLgHomeAtStart === true; },
-    blockFirst: function () { return /^1[01]\./.test(String(webosVersion || '')); }
+    blockFirst: function () { return /^1[01]\./.test(String(webosVersion || '')); },
+    restartSam: function () { return takeover.restartsSam(webosVersion); }
   });
   webosVersion = opts.webosVersion || null;
   serverPort = opts.port === undefined ? 8080 : Number(opts.port);
@@ -1472,6 +1552,9 @@ function restoreLegacyScreenSaver(cb) {
  * and stops an LG Home that started before the hook.
  */
 function start() {
+  if (dailyTimer) clearInterval(dailyTimer);
+  dailyTimer = setInterval(checkDaily, DAILY_CHECK_MS);
+  checkDaily();
   cleanLegacy(function (cleaned) {
     if (!cleaned) return;
     var c = readConfig();
@@ -1503,7 +1586,95 @@ function start() {
   });
 }
 
+/*
+ * Called once allowExperimentalHome has been saved. Switched off where that is
+ * what offered Glasshouse Home, LG's Home is given its place back at once
+ * rather than at the next start.
+ */
+function betaChanged(cb) {
+  var c = readConfig();
+  if (supported().ok || !(c.enabled || c.restorePending || takeover.mounted())) return cb({ ok: true });
+  console.log('home: the beta switched off; LG\'s Home put back');
+  disable(function (r) {
+    homeKeysFn(false);
+    cb(r);
+  });
+}
+
+/*
+ * What the view shows, which a picture of the day gives every time of day,
+ * with the uploads' own state beside it for the dashboards.
+ */
+function wallpaperStatus() {
+  var c = readConfig(), mine = wallpapers.status(), cur = daily.current();
+  var st = mine;
+  if (c.wallpaper.source === 'daily') {
+    var has = !!(cur && cur.provider === c.wallpaper.provider);
+    st = { available: has, uploading: false, slots: { morning: has, afternoon: has, evening: has, night: has },
+      revision: has ? 'daily-' + daily.describe(cur).revision : '' };
+  }
+  st = copy(st);
+  st.source = c.wallpaper.source;
+  st.provider = c.wallpaper.provider;
+  st.providers = daily.PROVIDERS;
+  st.mine = mine;
+  st.daily = daily.describe(cur);
+  return st;
+}
+
+// The file for a time of day: the picture of the day while that is the source, unless the uploads are asked for.
+function wallpaperImage(slot, mine) {
+  var c = readConfig();
+  if (!mine && c.wallpaper.source === 'daily') {
+    var cur = daily.current();
+    return cur && cur.provider === c.wallpaper.provider ? daily.image('current') : null;
+  }
+  var file = wallpapers.image(slot);
+  return file ? { file: file, type: 'jpg' } : null;
+}
+
+/*
+ * The provider's picture brought up to date, hourly and as Glasshouse Home is
+ * switched on, while it is on and the picture of the day is its wallpaper.
+ */
+function checkDaily() {
+  var c = readConfig();
+  if (!c.enabled || c.wallpaper.source !== 'daily') return;
+  daily.refresh(c.wallpaper.provider, function (err, meta, changed) {
+    if (err) return console.error('home: the picture of the day could not be read: ' + err.message);
+    if (changed) console.log('home: wallpaper is now ' + meta.provider + '\'s picture of the day, ' + meta.id);
+  });
+}
+
+/*
+ * The wallpaper's source. A picture of the day is fetched before it becomes
+ * the source, so a provider that cannot be reached leaves the wallpaper as it
+ * was. The uploads are kept either way.
+ */
+function setWallpaperSource(body, cb) {
+  var c = readConfig();
+  function save(changes) {
+    c = readConfig();
+    var before = copy(c.wallpaper);
+    c.wallpaper = changes.wallpaper;
+    if (!saveConfig()) {
+      c.wallpaper = before;
+      return cb({ ok: false, error: msg('srv.home.saveFailed', 'could not save the layout') });
+    }
+    cb({ ok: true, wallpapers: wallpaperStatus() });
+  }
+  if (body.source === 'mine') return save({ wallpaper: { source: 'mine', provider: c.wallpaper.provider } });
+  var provider = daily.validProvider(body.provider);
+  if (body.source !== 'daily' || !provider) return cb({ ok: false, error: 'source mine, or daily with a provider, expected' });
+  daily.refresh(provider, function (err) {
+    if (err) return cb({ ok: false, error: msg('srv.home.daily.failed', 'The picture of the day could not be fetched: {error}', { error: err.message }) });
+    save({ wallpaper: { source: 'daily', provider: provider } });
+  });
+}
+
 function stop() {
+  if (dailyTimer) clearInterval(dailyTimer);
+  dailyTimer = null;
   cancelWake();
   stopBeatWatch();
   if (holdTimer) clearTimeout(holdTimer);
@@ -1528,6 +1699,9 @@ module.exports = {
   setLayout: function (body, cb) { change(function (done) { setLayout(body, done); }, cb); },
   setHideLgHomeAtStart: function (body, cb) { change(function (done) { setHideLgHomeAtStart(body, done); }, cb); },
   enable: function (cb) { change(function (done) { enable(function (r) { if (r.ok) homeKeysFn(true); done(r); }); }, cb); },
+  betaChanged: function (cb) { change(betaChanged, cb); },
+  weather: function (cb) { weatherModule.weather(readConfig().weather, cb); },
+  weatherSearch: weatherModule.search,
   disable: function (cb) { change(function (done) { disable(function (r) { homeKeysFn(false); done(r); }); }, cb); },
   uninstall: function (cb) { change(uninstall, cb); },
   beat: beat,
@@ -1536,7 +1710,15 @@ module.exports = {
   iconPath: iconPath,
   // Back on the view: the TV's recent apps (lib/home-recent-apps).
   recentApps: recentApps,
-  wallpaperPath: wallpapers.image,
+  wallpaperImage: wallpaperImage,
+  dailyImage: daily.image,
+  // A provider's picture to look at before choosing it.
+  dailyPreview: function (provider, cb) {
+    daily.preview(provider, function (err, meta) {
+      if (err) return cb({ ok: false, error: msg('srv.home.daily.failed', 'The picture of the day could not be fetched: {error}', { error: err.message }) });
+      cb({ ok: true, picture: daily.describe(meta) });
+    });
+  },
   uploadWallpaper: function (slot, req, cb) {
     var sup = supported();
     if (!sup.ok) return cb({ ok: false, error: sup.reason });
@@ -1546,7 +1728,8 @@ module.exports = {
     var sup = supported();
     if (!sup.ok) return cb({ ok: false, error: sup.reason });
     if (body && body.removeUploads === true) return wallpapers.removeUploads(cb);
-    cb({ ok: false, error: 'removeUploads expected' });
+    if (body && body.source !== undefined) return setWallpaperSource(body, cb);
+    cb({ ok: false, error: 'removeUploads or source expected' });
   },
   normalise: normalise,
   layout: function () { return layoutOf(readConfig()); },
@@ -1562,7 +1745,9 @@ if (require.main === module && process.argv[2] === '--restore') {
   var restoreStateDir = path.join(__dirname, '..');
   rescan.init({ luna: lunaTransport.call });
   remoteKeys.init({ luna: lunaTransport.call, stateDir: restoreStateDir });
-  init({ luna: lunaTransport.call, samrescan: rescan, stateDir: restoreStateDir, webosVersion: '9',
+  // The TV's own version, so that webOS 6 to 8 restart sam to read LG's Home again.
+  init({ luna: lunaTransport.call, samrescan: rescan, stateDir: restoreStateDir,
+    webosVersion: require('./util').detectWebosVersion() || '9',
     setStarting: remoteKeys.setStarting, setHomeKey: remoteKeys.setHome, homeKeyApp: remoteKeys.homeApp });
   disable(function (r) {
     console.log(r.ok ? 'home: LG\'s Home restored' : 'home: ' + r.error);

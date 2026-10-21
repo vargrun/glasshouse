@@ -3,7 +3,8 @@
  * configd's blocked-app list, which is put back exactly as LG had it; without
  * the list (webOS 4) the caller is told to restart sam instead (#366). One app
  * is reread with a block and a release, the release always sent after a block
- * and tried again if refused.
+ * and tried again if refused. Where neither is there (webOS 6.5.3), restart()
+ * restarts sam and opens the app that was in front again.
  *
  * Strict ES5: runs on node 0.12.
  */
@@ -21,7 +22,8 @@ function fakeTV(list, opts) {
              // sam's block and release: the calls made, in order, and whether
              // sam has the call at all (webOS 4 answers neither).
              samCalls: [], hasBlock: opts.hasBlock !== false, failReleases: opts.failReleases || 0,
-             blockAnswerLost: !!opts.blockAnswerLost, blocked: {} };
+             blockAnswerLost: !!opts.blockAnswerLost, blocked: {},
+             front: opts.front || '', launched: [] };
   tv.luna = function (uri, payload, cb) {
     var r;
     if (uri === 'com.webos.applicationManager/blockSystemApp' || uri === 'com.webos.applicationManager/releaseBlockSystemApp') {
@@ -42,6 +44,11 @@ function fakeTV(list, opts) {
       if (tv.failWrites > 0 && tv.writes.length) { tv.failWrites--; r = { returnValue: false }; }
       else { tv.list = payload.configs[KEY].slice(); r = { returnValue: true }; }
       tv.writes.push(payload.configs[KEY].slice());
+    } else if (uri === 'com.webos.applicationManager/getForegroundAppInfo') {
+      r = { returnValue: true, appId: tv.front };
+    } else if (uri === 'com.webos.applicationManager/launch') {
+      tv.launched.push(payload.id);
+      r = { returnValue: true };
     } else {
       r = { returnValue: true };
     }
@@ -211,6 +218,36 @@ step(function () {
     assert.strictEqual(tv.blocked['com.webos.app.screensaver'], false, 'not left blocked');
     console.log('  ✓ if sam never reports the change the app is still released and the caller falls back');
     next();
+  }));
+});
+
+// 11. A restart: sam killed with the start limits cleared, the refused units
+// that require it started again, and the app in front opened again once sam
+// reports the change; nothing opened again over Home.
+step(function () {
+  var tv = fakeTV(null, { front: 'com.webos.app.hdmi2' });
+  var commands = [];
+  function exec(file, args, opts, cb) {
+    commands.push(args[1]);
+    setTimeout(function () { cb(null, commands.length === 2 ? 'eim.service\n' : ''); }, 1);
+  }
+  samrescan.init({ luna: tv.luna, pollMs: 5, exec: exec, restartSettleMs: 1 });
+  var polls = 0;
+  samrescan.restart(function (done) { done(++polls >= 3); }, checked(function (ok) {
+    assert.strictEqual(ok, true);
+    assert.strictEqual(commands.length, 2);
+    assert.ok(/systemctl reset-failed sam\.service/.test(commands[0]) && /systemctl kill -s 9 sam\.service/.test(commands[0]));
+    assert.ok(/systemctl is-failed --quiet/.test(commands[1]) && /systemctl start --no-block/.test(commands[1]));
+    assert.strictEqual(polls, 3, 'waited for sam to report the change');
+    assert.deepEqual(tv.launched, ['com.webos.app.hdmi2'], 'the input in front is opened again');
+    var home = fakeTV(null, { front: 'com.webos.app.home' });
+    samrescan.init({ luna: home.luna, pollMs: 5, exec: exec, restartSettleMs: 1 });
+    samrescan.restart(null, checked(function (ok2) {
+      assert.strictEqual(ok2, true);
+      assert.deepEqual(home.launched, [], 'Home is left to sam');
+      console.log('  ✓ a restart clears the start limits, starts refused units again and reopens the app in front');
+      next();
+    }));
   }));
 });
 

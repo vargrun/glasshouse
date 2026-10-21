@@ -848,12 +848,19 @@ function homeRows(d) {
   homeData = d;
   var r = [head(t('home.title', 'Glasshouse Home'))];
   if (!d || d.ok === false || !d.supported) return r;
+  var can = d.writable !== false;
+  if (d.supported.beta === true) {
+    r.push({ label: t('home.beta', 'Beta on this TV'),
+             value: d.beta ? t('common.on', 'On') : t('common.off', 'Off'), cls: d.beta ? 'on' : 'off',
+             act: can ? 'homeBeta' : null, on: !!d.beta,
+             press: d.beta ? t('tv.press.switchOff', 'Press OK to switch off') : t('tv.home.beta.on', 'Press OK, then again, to switch on'),
+             hint: t('home.betaDesc', 'Glasshouse Home has not been tried on this TV\u2019s webOS version. The beta offers it here. Switching the beta off puts LG\u2019s Home back at once, as does Use LG Home.') });
+  }
   if (!d.supported.ok && !d.enabled && !d.restorePending) {
     r.push({ label: t('home.unavailable', 'Not available on this TV'), value: '',
              hint: d.supported.reason || '' });
     return r;
   }
-  var can = d.writable !== false;
   r.push({ label: d.restorePending ? t('home.retryRestore', 'Retry restoring LG Home') : t('home.title', 'Glasshouse Home'),
            value: d.restorePending ? t('home.restorePending', 'LG Home restoration is incomplete') : d.enabled ? t('common.on', 'On') : t('common.off', 'Off'), cls: d.enabled ? 'on' : 'off',
            act: can ? 'homeSwitch' : null, on: d.enabled || d.restorePending,
@@ -888,6 +895,32 @@ function homeRows(d) {
                act: can ? 'homeColours' : null, key: nextLook,
                press: t('tv.home.colours.press', 'Press OK for {name}', { name: lookNames[nextLook.id] || nextLook.id }),
                hint: t('home.colours.tvHint', 'The text and accent on Glasshouse Home. Any colour can be picked on the browser dashboard’s Home tab.') });
+    }
+    // OK steps from the default through the presets; a format typed on the browser dashboard shows as it is.
+    var dates = [null].concat(d.datePresets || []), dateAt = dates.indexOf(d.layout.dateFormat || null);
+    var nextDate = dates[(dateAt + 1) % dates.length];
+    r.push({ label: t('home.dateFormat.title', 'Date'),
+             value: d.layout.dateFormat || t('home.dateFormat.default', 'Default'), cls: 'act',
+             act: can ? 'homeDateFormat' : null, key: nextDate,
+             press: t('tv.home.dateFormat.press', 'Press OK for {name}', { name: nextDate || t('home.dateFormat.default', 'Default') }),
+             hint: t('home.dateFormat.tvHint', 'How the date under the clock is written. Any format can be typed on the browser dashboard’s Home tab.') });
+    // The place is searched for on the browser dashboard; here it is switched on and off.
+    var wx = d.layout.weather || { on: false, place: null, units: 'c' };
+    r.push({ label: t('home.weather.show', 'Show the weather'),
+             value: wx.on ? t('common.on', 'On') : t('common.off', 'Off'), cls: wx.on ? 'on' : 'off',
+             act: can && (wx.on || wx.place) ? 'homeWeather' : null, on: wx.on,
+             press: wx.on ? t('tv.press.switchOff', 'Press OK to switch off') : t('tv.press.switchOn', 'Press OK to switch on'),
+             hint: wx.place ? t('home.weather.place', 'For {place}', { place: wx.place.name })
+                   : t('home.weather.tvNoPlace', 'Choose the place on the browser dashboard’s Home tab first.') });
+    if (wx.on) {
+      r.push({ label: t('home.weather.showPlace', 'Show the place\u2019s name'),
+               value: wx.showPlace ? t('common.on', 'On') : t('common.off', 'Off'), cls: wx.showPlace ? 'on' : 'off',
+               act: can ? 'homeWeatherName' : null, on: !!wx.showPlace,
+               press: wx.showPlace ? t('tv.press.switchOff', 'Press OK to switch off') : t('tv.press.switchOn', 'Press OK to switch on'),
+               hint: t('home.weather.showPlaceDesc', 'Before the conditions, as \u201cSarajevo\u201d.') });
+      r.push({ label: t('home.weather.units', 'Temperature'), value: wx.units === 'f' ? '°F' : '°C', cls: 'act',
+               act: can ? 'homeWeatherUnits' : null, key: wx.units === 'f' ? 'c' : 'f',
+               press: t('tv.home.weather.unitsPress', 'Press OK for {units}', { units: wx.units === 'f' ? '°C' : '°F' }) });
     }
   }
   // Opening Home opens Glasshouse Home only while it has LG's Home's place.
@@ -952,8 +985,20 @@ function homeRows(d) {
     });
     var walls = d.wallpapers || {};
     r.push(head(t('home.wall.title', 'Wallpaper')));
-    r.push({ label: t('home.wall.title', 'Wallpaper'), value: walls.available ? t('home.wall.uploadedValue', 'Uploaded') : t('home.wall.black', 'Black'),
-             hint: t('home.wall.tvHint', 'Images for each time of day are uploaded on the browser dashboard\u2019s Home tab.') });
+    // OK steps from the uploads through the providers; each fetches its picture before it applies.
+    var wallNames = { mine: t('home.wall.sourceMine', 'My images, one for each time of day'), bing: t('home.wall.bing', 'Bing'),
+                      wikimedia: t('home.wall.wikimedia', 'Wikimedia Commons') };
+    var wallSteps = ['mine', 'bing', 'wikimedia'];
+    var wallNow = walls.source === 'daily' ? walls.provider : 'mine';
+    var wallNext = wallSteps[(wallSteps.indexOf(wallNow) + 1) % wallSteps.length];
+    r.push({ label: t('home.wall.source', 'Source'), value: wallNames[wallNow] || wallNow, cls: 'act',
+             act: can ? 'homeWallSource' : null, key: wallNext,
+             press: t('tv.home.wall.sourcePress', 'Press OK for {name}', { name: wallNames[wallNext] }),
+             hint: walls.source === 'daily' && walls.daily
+               ? (walls.daily.title || '') + (walls.daily.credit ? ' \u2014 ' + walls.daily.credit : '')
+               : walls.mine && walls.mine.available
+                 ? t('home.wall.tvHint', 'Images for each time of day are uploaded on the browser dashboard\u2019s Home tab.')
+                 : t('home.wall.black', 'Black') });
     r.push(head(t('tv.home.head.more', 'More')));
     r.push({ label: t('home.reset', 'Reset the layout'), value: '', act: can ? 'homeReset' : null,
              press: t('tv.home.reset.press', 'Press OK, then again, to reset'),
@@ -2453,11 +2498,30 @@ function activate() {
       render();
       return sendPost('/api/home/start-layout', { hideLgHomeAtStart: !r.on },
                       r.on ? t('tv.flash.switchedOff', 'Switched off') : t('tv.flash.switchedOn', 'Switched on'));
+    case 'homeBeta':
+      if (!r.on && confirmFirst(r, t('home.betaConfirm', 'Press again to switch on'))) return;
+      r.value = t('apps.service.updating', 'Updating\u2026');
+      render();
+      return sendPost('/api/home/beta', { allow: !r.on },
+                      r.on ? t('tv.home.off', 'LG\u2019s Home is the TV\u2019s Home again') : t('tv.flash.switchedOn', 'Switched on'));
     case 'homePicture':
       return homeLayout({ picture: !r.on });
     case 'homeColours':
       // The first preset is the view's own colours, saved as none chosen.
       return homeLayout({ colours: r.key.id === homeData.colourPresets[0].id ? null : { text: r.key.text, accent: r.key.accent } });
+    case 'homeDateFormat':
+      return homeLayout({ dateFormat: r.key });
+    case 'homeWallSource':
+      r.value = t('home.wall.fetching', 'Fetching today\u2019s picture\u2026');
+      render();
+      return sendPost('/api/home/wallpapers', r.key === 'mine' ? { source: 'mine' } : { source: 'daily', provider: r.key },
+                      t('tv.flash.switchedOn', 'Switched on'));
+    case 'homeWeather':
+      return homeLayout({ weather: { on: !r.on } });
+    case 'homeWeatherName':
+      return homeLayout({ weather: { showPlace: !r.on } });
+    case 'homeWeatherUnits':
+      return homeLayout({ weather: { units: r.key } });
     case 'homeOpen':
       return send({ action: 'launchApp', value: 'com.webos.app.home' });
     case 'homeRowUp':

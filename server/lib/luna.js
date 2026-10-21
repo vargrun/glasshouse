@@ -282,6 +282,22 @@ Subscription.prototype._spawn = function () {
   });
 };
 
+/*
+ * A service that stops ends its subscriptions with one "<service> is not
+ * running" reply, and luna-send then stays connected with nothing more to
+ * say: after a sam restart on a C1 (webOS 6.5.3) a subscription to
+ * applicationManager/getForegroundAppInfo reported nothing again. So it is
+ * ended, and subscribed again once the service is back, as on a close. Any
+ * other answer means the service is there, and the next retry starts quick.
+ */
+Subscription.prototype._served = function (r) {
+  if (r && r.returnValue === false && /is not running/i.test(String(r.errorText || ''))) {
+    if (this.child) this.child.kill();
+    return;
+  }
+  this.retryMs = 1000;
+};
+
 Subscription.prototype._consume = function (chunk) {
   var i, start = -1, depth = 0, quoted = false, escaped = false, ch, raw;
   this.buffer += chunk;
@@ -305,6 +321,7 @@ Subscription.prototype._consume = function (chunk) {
         try {
           var parsed = JSON.parse(raw);
           if (this.handlers.message) this.handlers.message(parsed);
+          this._served(parsed);
         } catch (e) {
           if (this.handlers.error) this.handlers.error(e, raw);
         }

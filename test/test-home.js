@@ -92,17 +92,25 @@ function samScan() {
   tv.samCategory = info.appCategory || null;
 }
 
-// webOS 10 ignores the nudge and rereads one app on a block and release.
+// webOS 10 ignores the nudge and rereads one app on a block and release. A C1
+// (webOS 6.5.3) has neither, and reads its apps again only when restarted,
+// which closes LG's Home.
 var samrescan = {
   refresh: function (check, cb) {
     tv.events.push('reread');
-    if (!tv.nudgeIgnored) samScan();
+    if (!tv.nudgeIgnored && !tv.noRescan) samScan();
     check(function (ok) { cb(ok); });
   },
   rereadApp: function (id, check, cb) {
-    if (!tv.nudgeIgnored) return cb(false);
+    if (!tv.nudgeIgnored || tv.noRescan) return cb(false);
     tv.events.push('block and release');
     samScan();
+    check(function (ok) { cb(ok); });
+  },
+  restart: function (check, cb) {
+    tv.events.push('restart sam');
+    samScan();
+    lgRunning(false);
     check(function (ok) { cb(ok); });
   }
 };
@@ -133,6 +141,10 @@ function luna(uri, p, cb) {
     if (tv.settingsReadFails) return process.nextTick(function () { cb({ returnValue: false }); });
     r.settings = {};
     p.keys.forEach(function (k) { if (tv.settings[k] !== undefined) r.settings[k] = copy(tv.settings[k]); });
+    // A key the TV lacks, as a C1 (webOS 6.5.3) answers for defaultApps.
+    var lacking = p.keys.filter(function (k) { return (tv.lacksKeys || []).indexOf(k) !== -1; });
+    if (lacking.length === p.keys.length) r = { returnValue: false, errorText: 'There is no matched result from DB' };
+    else if (lacking.length) { r.returnValue = false; r.errorKey = lacking; }
   } else if (uri === 'com.webos.service.settings/setSystemSettings') {
     if ((tv.settingsWriteFails && p.settings.screenSaverEnabled === undefined) ||
         (tv.saverWriteFails && p.settings.screenSaverEnabled !== undefined)) {
@@ -671,6 +683,113 @@ step('webOS 11 only with allowExperimentalHome', function (done) {
   });
 });
 
+step('webOS 6 to 8 are offered as a beta, and webOS 5 not at all', function (done) {
+  var beta = false;
+  start(null, { webosVersion: '8.3.0', allowExperimental: function () { return beta; } });
+  home.status(function (st0) {
+    assert.strictEqual(st0.supported.ok, false, 'untried there, so not offered until the beta is on');
+    assert.strictEqual(st0.supported.beta, true);
+    assert.strictEqual(st0.available, true, 'the Home tab shows, so the beta can be switched on');
+    assert.strictEqual(st0.beta, false);
+    home.enable(function (r0) {
+      assert.strictEqual(r0.ok, false, 'not switched on before the beta is');
+      beta = true;
+      home.status(function (st) {
+        assert.strictEqual(st.supported.ok, true);
+        assert.strictEqual(st.supported.experimental, true);
+        assert.strictEqual(st.beta, true);
+        assert.strictEqual(st.hideLgHomeAtStartAvailable, false, 'the start-up layout is webOS 9\'s only');
+        home.enable(function (r) {
+          assert.ok(r.ok, r.error);
+          assert.deepEqual(tv.events, ['mount', 'reread', 'stop LG ' + LG_PID], 'nudged as on webOS 9, then LG\'s Home stopped');
+          assert.ok(taken());
+          start(null, { webosVersion: '5.5.0', allowExperimental: function () { return true; } });
+          home.status(function (st5) {
+            assert.strictEqual(st5.supported.ok, false, 'webOS 5 has no Home app to take the place of');
+            assert.ok(st5.supported.beta !== true);
+            assert.strictEqual(st5.available, false);
+            assert.strictEqual(st5.beta, null);
+            done();
+          });
+        });
+      });
+    });
+  });
+});
+
+step('webOS 6 to 8 restart sam where it has neither the nudge nor the block and release, and webOS 9 never does', function (done) {
+  start(null, { webosVersion: '6.5.3', allowExperimental: function () { return true; } });
+  tv.noRescan = true;
+  home.enable(function (r) {
+    assert.ok(r.ok, r.error);
+    assert.deepEqual(tv.events, ['mount', 'reread', 'restart sam'], 'the nudge first, then the restart, which closed LG\'s Home');
+    assert.ok(taken());
+    tv.events = [];
+    home.disable(function (r2) {
+      assert.ok(r2.ok, r2.error);
+      assert.deepEqual(tv.events.filter(function (e) { return e !== 'close page'; }), ['umount', 'reread', 'restart sam']);
+      assert.strictEqual(tv.samType, 'native', 'sam has LG\'s Home back');
+      start(null, { webosVersion: '9.2.2' });
+      tv.noRescan = true;
+      home.enable(function (r3) {
+        assert.strictEqual(r3.ok, false, 'webOS 9 gives up rather than restart sam');
+        assert.ok(tv.events.indexOf('restart sam') === -1);
+        assert.ok(!taken());
+        done();
+      });
+    });
+  });
+});
+
+step('a TV without a setting asked for, as webOS 6 has no defaultApps, still finishes a switch-off and a start', function (done) {
+  start(null, { webosVersion: '6.5.3', allowExperimental: function () { return true; } });
+  tv.lacksKeys = ['defaultApps'];
+  delete tv.settings.defaultApps;
+  home.enable(function (r) {
+    assert.ok(r.ok, r.error);
+    home.disable(function (r2) {
+      assert.ok(r2.ok, r2.error);
+      home.status(function (st) {
+        assert.strictEqual(st.restorePending, false, 'not left as an incomplete restoration');
+        // A restoration an earlier build left pending is finished at start.
+        start({ enabled: false, restorePending: true }, { webosVersion: '6.5.3', allowExperimental: function () { return true; } });
+        tv.lacksKeys = ['defaultApps'];
+        delete tv.settings.defaultApps;
+        home.start();
+        wait(50, function () {
+          home.status(function (st2) {
+            assert.strictEqual(st2.restorePending, false, 'finished at start');
+            done();
+          });
+        });
+      });
+    });
+  });
+});
+
+step('the beta switched off while Glasshouse Home is on puts LG\'s Home back at once', function (done) {
+  var beta = true;
+  start(null, { webosVersion: '7.4.0', allowExperimental: function () { return beta; } });
+  home.enable(function (r) {
+    assert.ok(r.ok, r.error);
+    assert.ok(taken());
+    beta = false;
+    home.betaChanged(function (r2) {
+      assert.ok(r2.ok, r2.error);
+      assert.strictEqual(home.enabled(), false);
+      assert.ok(!taken(), 'LG\'s Home has its place back');
+      home.status(function (st) {
+        assert.strictEqual(st.restorePending, false);
+        assert.strictEqual(st.available, true, 'the tab stays, to switch the beta on again');
+        home.betaChanged(function (r3) {
+          assert.ok(r3.ok, 'nothing to put back the second time');
+          done();
+        });
+      });
+    });
+  });
+});
+
 step('webOS 10 is offered without the setting, with LG\'s Flutter Home stopped and no start-up layout', function (done) {
   start(null, { webosVersion: '10.3.1' });
   home.status(function (st0) {
@@ -1104,6 +1223,112 @@ step('only #rrggbb colours are kept, since the view writes them into its stylesh
     });
   }
   rejectNext();
+});
+
+step('a date format is kept only with known placeholders, and null puts the translation\'s order back', function (done) {
+  start(null);
+  var invalid = ['{day}. {month}', '{day', 'day}', '{day}{{year}}', new Array(42).join('x'), 7];
+  function refuseNext() {
+    if (invalid.length) {
+      return home.setLayout({ dateFormat: invalid.shift() }, function (r) {
+        assert.strictEqual(r.ok, false, 'refused, so the dashboard can say why');
+        assert.ok(/\{month:str\}/.test(r.error), 'the error names the placeholders');
+        refuseNext();
+      });
+    }
+    home.status(function (st) {
+      assert.strictEqual(st.layout.dateFormat, null, 'nothing refused was saved');
+      assert.ok(st.datePresets.length > 0);
+      st.datePresets.forEach(function (f) { assert.strictEqual(home.normalise({ dateFormat: f }).dateFormat, f, 'every preset is valid'); });
+      home.setLayout({ dateFormat: '  {weekday}, {day}. {month:str} {year} ' }, function (r2) {
+        assert.ok(r2.ok, r2.error);
+        assert.strictEqual(r2.layout.dateFormat, '{weekday}, {day}. {month:str} {year}', 'kept, trimmed');
+        home.setLayout({ hintSeen: true }, function (r3) {
+          assert.strictEqual(r3.layout.dateFormat, '{weekday}, {day}. {month:str} {year}', 'kept when not sent');
+          home.setLayout({ dateFormat: null }, function (r4) {
+            assert.ok(r4.ok, r4.error);
+            assert.strictEqual(r4.layout.dateFormat, null);
+            assert.strictEqual(home.normalise({ dateFormat: '{bad}' }).dateFormat, null, 'a stored format the view could not fill is dropped');
+            done();
+          });
+        });
+      });
+    });
+  }
+  refuseNext();
+});
+
+step('the weather settings change only in the parts sent, and anything unusable is dropped', function (done) {
+  start(null);
+  home.status(function (st) {
+    assert.deepEqual(st.layout.weather, { on: false, place: null, units: 'c', showPlace: false }, 'off until chosen');
+    var place = { name: 'Sarajevo', country: 'Bosna i Hercegovina', lat: 43.84864, lon: 18.35644 };
+    home.setLayout({ weather: { place: place, on: true } }, function (r) {
+      assert.ok(r.ok, r.error);
+      assert.deepEqual(r.layout.weather, { on: true, units: 'c', showPlace: false,
+        place: { name: 'Sarajevo', country: 'Bosna i Hercegovina', lat: 43.8486, lon: 18.3564 } });
+      home.setLayout({ weather: { units: 'f', showPlace: true } }, function (r2) {
+        assert.strictEqual(r2.layout.weather.units, 'f');
+        assert.strictEqual(r2.layout.weather.showPlace, true);
+        assert.strictEqual(r2.layout.weather.on, true, 'the rest kept');
+        assert.strictEqual(r2.layout.weather.place.name, 'Sarajevo');
+        home.setLayout({ weather: { on: 'yes', units: 'kelvin', place: { name: 'Nowhere', lat: 200, lon: 0 } } }, function (r3) {
+          assert.deepEqual(r3.layout.weather, { on: true, place: null, units: 'f', showPlace: true }, 'a place without coordinates is dropped');
+          done();
+        });
+      });
+    });
+  });
+});
+
+step('a picture of the day becomes every time of day\'s wallpaper, and the uploads come back with My images', function (done) {
+  var bingDown = false;
+  var fakeGetJson = function (url, cb) {
+    setTimeout(function () {
+      if (bingDown) return cb(new Error('Could not resolve host'));
+      cb(null, { images: [{ urlbase: '/th?id=OHR.Sloth', hsh: 'h1', title: 'Life in the slow lane', copyright: '© Suzi Eszterhas' }] });
+    }, 1);
+  };
+  var fakeDownload = function (url, out, opts, cb) {
+    fs.writeFileSync(out, require('../server/lib/util').toBuffer([0xff, 0xd8, 0xff, 0xe0, 0xff, 0xd9]));
+    setTimeout(function () { cb(null); }, 1);
+  };
+  start(null, { getJson: fakeGetJson, download: fakeDownload });
+  var uploads = path.join(dir, 'home-wallpaper-uploads');
+  fs.mkdirSync(uploads);
+  fs.writeFileSync(path.join(uploads, 'evening.jpg'), 'mine');
+  home.status(function (st0) {
+    assert.strictEqual(st0.wallpapers.source, 'mine');
+    assert.deepEqual(st0.wallpapers.slots, { morning: false, afternoon: false, evening: true, night: false });
+    bingDown = true;
+    home.setWallpapers({ source: 'daily', provider: 'bing' }, function (r0) {
+      assert.strictEqual(r0.ok, false, 'a provider that cannot be reached is not made the source');
+      bingDown = false;
+      home.setWallpapers({ source: 'daily', provider: 'bing' }, function (r) {
+        assert.ok(r.ok, r.error);
+        var w = r.wallpapers;
+        assert.strictEqual(w.source, 'daily');
+        assert.deepEqual(w.slots, { morning: true, afternoon: true, evening: true, night: true }, 'every time of day');
+        assert.strictEqual(w.daily.title, 'Life in the slow lane');
+        assert.ok(/^daily-/.test(w.revision));
+        assert.deepEqual(w.mine.slots, st0.wallpapers.slots, 'the uploads are kept');
+        assert.ok(/wallpaper-a\.jpg$/.test(home.wallpaperImage('morning').file), 'the picture of the day for the view');
+        assert.ok(/evening\.jpg$/.test(home.wallpaperImage('evening', true).file), 'the upload, where asked for');
+        home.setLayout({ hintSeen: true }, function () {
+          home.status(function (st) {
+            assert.strictEqual(st.wallpapers.source, 'daily', 'a layout save keeps the wallpaper\'s source');
+            home.setWallpapers({ source: 'mine' }, function (r4) {
+              assert.ok(r4.ok, r4.error);
+              assert.strictEqual(r4.wallpapers.source, 'mine');
+              assert.deepEqual(r4.wallpapers.slots, st0.wallpapers.slots, 'the uploads are the wallpaper again');
+              assert.ok(/evening\.jpg$/.test(home.wallpaperImage('evening').file));
+              done();
+            });
+          });
+        });
+      });
+    });
+  });
 });
 
 step('a failed save switches nothing', function (done) {

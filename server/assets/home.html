@@ -64,6 +64,34 @@ body{font-family:'Manrope',sans-serif;color:#ece7df;-webkit-font-smoothing:antia
 #plStrip{font-size:23px;height:36px;line-height:38px;color:#a39d93}
 #plStrip b{font-weight:400;color:#6b665e;margin-right:12px}
 
+/* The weather in the plate's place: the temperature on the clock's scale, the
+   conditions under it, and the next two days on the date's line. Under a
+   shown plate it is one line instead, and the rows start lower. */
+#weather{-webkit-flex:0 0 auto;flex:0 0 auto;max-width:480px;margin-left:40px;text-align:right;white-space:nowrap}
+#weather.none{display:none}
+#wxNow{display:-webkit-flex;display:flex;-webkit-justify-content:flex-end;justify-content:flex-end;-webkit-align-items:flex-end;align-items:flex-end}
+#wxNow .wxi{width:96px;height:96px;margin-right:14px;margin-bottom:2px;stroke-width:1.3}
+.wxt{font-family:'Outfit',sans-serif;font-size:176px;line-height:.8;font-weight:300;letter-spacing:-4px}
+/* Two short lines rather than one long one, so the source beside keeps its room. */
+#wxSay{margin-top:16px;font-size:26px;line-height:32px;color:#a39d93;overflow:hidden;text-overflow:ellipsis}
+#wxDays{margin-top:2px;font-size:26px;line-height:32px;color:#a39d93}
+.wxi{display:inline-block;width:30px;height:30px;vertical-align:-6px;fill:none;stroke:currentColor;stroke-width:1.6;
+  stroke-linecap:round;stroke-linejoin:round}
+.wxp{color:#6b665e;margin-right:16px}
+.wxd{margin-left:26px}
+.wxd:first-child{margin-left:0}
+.wxd b{font-weight:400;color:#6b665e;margin-right:10px}
+.wxd .wxi{margin-right:8px}
+#weather[data-under="1"]{position:absolute;right:112px;top:278px;margin:0;max-width:none;
+  display:-webkit-flex;display:flex;-webkit-align-items:baseline;align-items:baseline}
+#weather[data-under="1"] #wxNow .wxi{width:30px;height:30px;margin:0 8px 0 0;stroke-width:1.6}
+#weather[data-under="1"] .wxt{font-size:30px;line-height:1;letter-spacing:0;font-weight:400;margin-right:16px}
+#weather[data-under="1"] #wxSay,#weather[data-under="1"] #wxDays{margin:0;font-size:24px;line-height:1.3}
+/* overflow:hidden would put its baseline at its foot, above the others'. */
+#weather[data-under="1"] #wxSay{overflow:visible}
+#weather[data-under="1"] #wxDays{margin-left:26px}
+#stage[data-wx-under="1"] #rows{top:336px}
+
 /* The rows sit centred between the clock and the arrange bar, so three rows
    land a little below where they used to and fewer settle lower. The spacers shrink first, so rows taller than the space run on down
    rather than under the clock. A row with nothing to show is left out, and
@@ -209,6 +237,11 @@ body{font-family:'Manrope',sans-serif;color:#ece7df;-webkit-font-smoothing:antia
       <div id="plMode"></div>
       <div id="plStrip"></div>
     </div>
+    <div id="weather" class="none" data-under="0">
+      <div id="wxNow"></div>
+      <div id="wxSay"></div>
+      <div id="wxDays"></div>
+    </div>
   </section>
 
   <main id="rows"></main>
@@ -283,14 +316,45 @@ body{font-family:'Manrope',sans-serif;color:#ece7df;-webkit-font-smoothing:antia
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
-  // The words from the browser's locale, the order from the translation.
-  function dateText(d) {
-    function part(opts) {
-      try { return d.toLocaleDateString(undefined, opts); } catch (e) { return ''; }
+  /*
+   * A language the web engine has no names for comes back in ICU's root
+   * locale, "Tue 20 M10", as on a C1 (webOS 6.5.3) in bs-Latn-BA, whose ICU 64
+   * data has no bs_Latn. sr_Latn_BA is there and names the months and days as
+   * Bosnian does. English is the last resort.
+   */
+  var DATE_FALLBACKS = { bs: ['sr-Latn-BA'] };
+  var namesLocale = null;
+  // The first locale with real names for the months, found once.
+  function nameLocale() {
+    if (namesLocale) return namesLocale.value;
+    var lang = String(navigator.language || '').split('-')[0].toLowerCase();
+    var locales = [undefined].concat(DATE_FALLBACKS[lang] || [], ['en']), i, month;
+    for (i = 0; i < locales.length; i++) {
+      try { month = new Date(2026, 9, 1).toLocaleDateString(locales[i], { month: 'long' }); } catch (e) { continue; }
+      if (!/^M\d+$/.test(month)) break;
     }
-    return t('home.date', '{weekday} {day} {month}', {
-      weekday: part({ weekday: 'long' }), day: d.getDate(), month: part({ month: 'long' })
-    });
+    namesLocale = { value: locales[Math.min(i, locales.length - 1)] };
+    return namesLocale.value;
+  }
+  function localName(d, opts) {
+    try { return d.toLocaleDateString(nameLocale(), opts); } catch (e) { return ''; }
+  }
+
+  /*
+   * The words from the browser's locale. The order is the layout's date
+   * format where one is chosen (lib/home.js checks it has only these
+   * placeholders), and otherwise the translation's.
+   */
+  function dateText(d) {
+    var weekday = localName(d, { weekday: 'long' }), month = localName(d, { month: 'long' });
+    if (layout && layout.dateFormat) {
+      var parts = { '{weekday}': weekday, '{day}': d.getDate(), '{month:no}': d.getMonth() + 1,
+                    '{month:str}': month, '{year}': d.getFullYear() };
+      return layout.dateFormat.replace(/\{[^{}]*\}/g, function (token) {
+        return parts[token] === undefined ? token : String(parts[token]);
+      });
+    }
+    return t('home.date', '{weekday} {day} {month}', { weekday: weekday, day: d.getDate(), month: month });
   }
 
   function request(method, url, body, cb) {
@@ -542,7 +606,10 @@ body{font-family:'Manrope',sans-serif;color:#ece7df;-webkit-font-smoothing:antia
   function renderPicture() {
     var p = picture;
     var s = p && p.signal;
-    if (!p || !(s || p.mode || lastOn.kind === 'input')) { $('plate').className = 'none'; return; }
+    if (!p || !(s || p.mode || lastOn.kind === 'input')) {
+      $('plate').className = 'none';
+      return placeWeather();
+    }
     var sig = [];
     if (s) {
       // An app's video, noted while it played: it has stopped since.
@@ -563,6 +630,92 @@ body{font-family:'Manrope',sans-serif;color:#ece7df;-webkit-font-smoothing:antia
         '</b>' + esc(p.light) + '</div>'
       : '';
     $('plate').className = '';
+    placeWeather();
+  }
+
+  // ---------------------------------------------------------------- weather
+
+  /*
+   * The weather from lib/home-weather, top right: where the plate is shown,
+   * one line under it with the rows moved down to make room; otherwise in the
+   * plate's place, the temperature as large as the clock and the days on the
+   * date's line. Codes are WMO weather codes, as Open-Meteo gives them.
+   */
+  var weatherNow = null, weatherRevision = 0;
+  var WX_ICONS = {
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/>',
+    moon: '<path d="M19.5 14.6A8 8 0 0 1 9.4 4.5a8 8 0 1 0 10.1 10.1z"/>',
+    cloud: '<path d="M7.5 18.5h9.8a4.2 4.2 0 0 0 .5-8.4 6 6 0 0 0-11.5 1.6 3.4 3.4 0 0 0 1.2 6.8z"/>',
+    partly: '<path d="M8.5 3v1.6M3.9 4.9l1.1 1.1M2 9.5h1.6M12.6 6.1l1.1-1.1"/><path d="M5.3 11.4a3.6 3.6 0 0 1 6.3-3.3"/>' +
+      '<path d="M9.5 20h8.2a3.6 3.6 0 0 0 .4-7.2 5.1 5.1 0 0 0-9.8 1.4 2.9 2.9 0 0 0 1.2 5.8z"/>',
+    fog: '<path d="M4 9h16M3 13h18M5 17h14"/>',
+    rain: '<path d="M7.5 15h9.8a4.2 4.2 0 0 0 .5-8.4 6 6 0 0 0-11.5 1.6 3.4 3.4 0 0 0 1.2 6.8z"/><path d="M9 18l-1 2.5M13 18l-1 2.5M17 18l-1 2.5"/>',
+    snow: '<path d="M7.5 15h9.8a4.2 4.2 0 0 0 .5-8.4 6 6 0 0 0-11.5 1.6 3.4 3.4 0 0 0 1.2 6.8z"/><path d="M8.5 19h.01M12 20.5h.01M15.5 19h.01"/>',
+    storm: '<path d="M7.5 15h9.8a4.2 4.2 0 0 0 .5-8.4 6 6 0 0 0-11.5 1.6 3.4 3.4 0 0 0 1.2 6.8z"/><path d="M12.5 15.5l-2 3.5h3l-2 3.5"/>'
+  };
+  function wxKind(code, day) {
+    if (code === 0) return day === false ? 'moon' : 'sun';
+    if (code === 1 || code === 2) return day === false ? 'cloud' : 'partly';
+    if (code === 3) return 'cloud';
+    if (code === 45 || code === 48) return 'fog';
+    if (code >= 71 && code <= 77 || code === 85 || code === 86) return 'snow';
+    if (code >= 95) return 'storm';
+    return 'rain';
+  }
+  function wxSaid(code) {
+    if (code === 0) return t('home.weather.clear', 'Clear');
+    if (code === 1 || code === 2) return t('home.weather.partly', 'Partly cloudy');
+    if (code === 3) return t('home.weather.cloudy', 'Cloudy');
+    if (code === 45 || code === 48) return t('home.weather.fog', 'Fog');
+    if (code >= 51 && code <= 57) return t('home.weather.drizzle', 'Drizzle');
+    if (code >= 71 && code <= 77 || code === 85 || code === 86) return t('home.weather.snow', 'Snow');
+    if (code >= 95) return t('home.weather.storm', 'Thunderstorm');
+    if (code >= 80) return t('home.weather.showers', 'Showers');
+    return t('home.weather.rain', 'Rain');
+  }
+  function wxIcon(code, day) {
+    return '<svg class="wxi" viewBox="0 0 24 24" aria-hidden="true">' + WX_ICONS[wxKind(code, day)] + '</svg>';
+  }
+  function wxDay(d) {
+    var p = String(d.date).split('-');
+    var name = localName(new Date(+p[0], +p[1] - 1, +p[2]), { weekday: 'short' });
+    return '<span class="wxd"><b>' + esc(name) + '</b>' + wxIcon(d.code) +
+      esc(t('home.weather.range', '{max}\u00b0 / {min}\u00b0', { max: d.max, min: d.min })) + '</span>';
+  }
+
+  function renderWeather() {
+    var w = weatherNow, el = $('weather');
+    if (!w || !layout || !layout.weather || !layout.weather.on) {
+      el.className = 'none';
+      return placeWeather();
+    }
+    var temp = esc(t('home.weather.temp', '{temp}\u00b0', { temp: w.now.temp }));
+    $('wxNow').innerHTML = wxIcon(w.now.code, w.now.day) + '<span class="wxt">' + temp + '</span>';
+    // The place's name, where chosen, leads the line, quieter than the conditions.
+    var place = layout.weather.showPlace && w.place ? '<span class="wxp">' + esc(w.place) + '</span>' : '';
+    $('wxSay').innerHTML = place + '<span class="wxs">' + esc(wxSaid(w.now.code)) + '</span>';
+    $('wxDays').innerHTML = w.days.map(wxDay).join('');
+    el.className = '';
+    placeWeather();
+  }
+
+  function placeWeather() {
+    var under = $('weather').className !== 'none' && $('plate').className !== 'none';
+    $('weather').setAttribute('data-under', under ? '1' : '0');
+    $('stage').setAttribute('data-wx-under', under ? '1' : '0');
+  }
+
+  function refreshWeather() {
+    var revision = ++weatherRevision;
+    if (!layout || !layout.weather || !layout.weather.on || !layout.weather.place) {
+      weatherNow = null;
+      return renderWeather();
+    }
+    getJson('/api/home/weather', function (r) {
+      if (revision !== weatherRevision) return;
+      weatherNow = r && r.ok ? r.weather : null;
+      renderWeather();
+    });
   }
 
   // ---------------------------------------------------------------- actions
@@ -1102,6 +1255,9 @@ body{font-family:'Manrope',sans-serif;color:#ece7df;-webkit-font-smoothing:antia
       applyColours(layout.colours);
       if (r.layoutVersion) layoutVersion = r.layoutVersion;
       refreshPicture();
+      refreshWeather();
+      // The date's format is the layout's: drawn again, as /now may have answered first.
+      renderNow();
       clearTimeout(loadRetry);
       wallAvailable = !!(r.wallpapers && r.wallpapers.available);
       wallSlots = r.wallpapers && r.wallpapers.slots;
@@ -1198,6 +1354,7 @@ body{font-family:'Manrope',sans-serif;color:#ece7df;-webkit-font-smoothing:antia
   load();
   setInterval(beat, BEAT_MS);
   setInterval(function () { renderNow(); updateWall(); if (!document.hidden) refreshPicture(); }, 15000);
+  setInterval(function () { if (!document.hidden) refreshWeather(); }, 10 * 60 * 1000);
   setInterval(function () { refreshNow(); refreshGuide(); }, 60000);
   setInterval(function () { if (!state.arranging) load(); }, 5 * 60000);
 })();

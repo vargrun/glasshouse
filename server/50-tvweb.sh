@@ -92,6 +92,36 @@ sam_reread_app() {
   return 1
 }
 
+# Restarts sam, where it has no other way to read its apps again: the app in
+# front is opened again afterwards, so the TV is not left on Home.
+sam_restart() {
+  # Capture the active foreground app before restarting SAM so we can restore it
+  fg_app=$(luna-send -n 1 -f luna://com.webos.applicationManager/getForegroundAppInfo '{}' 2>/dev/null | sed -n 's/.*"appId": *"\([^"]*\)".*/\1/p')
+
+  if command -v systemctl >/dev/null 2>&1; then
+    killall -9 LunaExecutable >/dev/null 2>&1 || true
+    systemctl kill -s 9 sam.service >/dev/null 2>&1 || systemctl restart --no-block sam >/dev/null 2>&1 || true
+  elif command -v initctl >/dev/null 2>&1; then
+    initctl restart sam >/dev/null 2>&1 || pkill -9 -x sam >/dev/null 2>&1 || true
+  else
+    pkill -9 -x sam >/dev/null 2>&1 || true
+  fi
+
+  # Wait for SAM to become responsive (support BusyBox usleep with fallback)
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    usleep 200000 2>/dev/null || sleep 1
+    if luna-send -n 1 -f luna://com.webos.applicationManager/getForegroundAppInfo '{}' >/dev/null 2>&1; then
+      break
+    fi
+  done
+
+  # If the user was on an HDMI port or any non-home app, immediately restore it
+  # so they are never stranded on the Home screen
+  if [ -n "$fg_app" ] && [ "$fg_app" != "com.webos.app.home" ]; then
+    luna-send -n 1 -f luna://com.webos.applicationManager/launch "{\"id\":\"$fg_app\"}" >/dev/null 2>&1 || true
+  fi
+}
+
 # Whether sam's getAppInfo for app $1 matches pattern $2 within 20s: at boot sam
 # can still be on its own first scan, and takes the nudge after it.
 sam_reports() {
@@ -117,22 +147,25 @@ webos_major=$(sed -n 's/.*webOS[^0-9]*\([0-9][0-9]*\)\..*/\1/p' /etc/issue 2>/de
 # under it, its own layout too, and it restarts on that. The server does the
 # same at its start, for a hook that did not run.
 # On webOS 10 and 11 LG's Home is a Flutter app run as
-# "flutter-client -i com.webos.app.home"; webOS 11 only with
-# allowExperimentalHome in config.json. sam ignores the nudge there (above), so
-# the app is reread with a block and release first.
+# "flutter-client -i com.webos.app.home". sam ignores the nudge there (above),
+# so the app is reread with a block and release first. webOS 6 to 8 and 11,
+# untried, only with the beta (allowExperimentalHome in config.json); 6 to 8
+# are nudged as webOS 9 is, and sam is restarted where there is no nudge.
 homeapp=/usr/palm/applications/com.webos.app.home
 homestage=/var/lib/tvweb/home-takeover
 home_os=0
 [ "$webos_major" = "9" ] && home_os=1
 [ "$webos_major" = "10" ] && home_os=1
-if [ "$webos_major" = "11" ]; then
-  grep -q '"allowExperimentalHome"[[:space:]]*:[[:space:]]*true' /var/lib/tvweb/config.json 2>/dev/null && home_os=1
-fi
+case "$webos_major" in
+  6|7|8|11)
+    grep -q '"allowExperimentalHome"[[:space:]]*:[[:space:]]*true' /var/lib/tvweb/config.json 2>/dev/null && home_os=1 ;;
+esac
 # A block and release cut short leaves Home blocked across boots, as for the
 # screen saver below, so it is released at every boot where it is ever blocked.
-if [ "$webos_major" = "10" ] || [ "$webos_major" = "11" ]; then
-  luna-send -n 1 luna://com.webos.applicationManager/releaseBlockSystemApp '{"id":"com.webos.app.home"}' >/dev/null 2>&1 || true
-fi
+case "$webos_major" in
+  6|7|8|10|11)
+    luna-send -n 1 luna://com.webos.applicationManager/releaseBlockSystemApp '{"id":"com.webos.app.home"}' >/dev/null 2>&1 || true ;;
+esac
 lg_home_pids() {
   pidof com.webos.app.home
   for cmd in /proc/[0-9]*/cmdline; do
@@ -181,11 +214,13 @@ home_opened=0
 if [ "$home_os" -eq 1 ] && [ -f "$homestage/appinfo.json" ] &&
    grep -q '"enabled"[[:space:]]*:[[:space:]]*true' /var/lib/tvweb/home.json 2>/dev/null; then
   mount --bind "$homestage" "$homeapp" 2>/dev/null || true
-  if [ "$webos_major" = "9" ]; then
-    home_reread() { sam_nudge; }
-  else
-    home_reread() { sam_reread_app com.webos.app.home; }
-  fi
+  # webOS 6 to 8 without the nudge (a C1 on 6.5.3 has neither it nor the
+  # block and release) restart sam, as lib/samrescan.js restart() does.
+  case "$webos_major" in
+    6|7|8) home_reread() { sam_nudge || sam_restart; } ;;
+    9) home_reread() { sam_nudge; } ;;
+    *) home_reread() { sam_reread_app com.webos.app.home; } ;;
+  esac
   if home_reread && sam_reports com.webos.app.home '"type": *"web"'; then
     for pid in $(lg_home_pids); do kill "$pid" 2>/dev/null; done
     echo "$(date): Glasshouse Home is in LG's Home's place"
@@ -298,31 +333,7 @@ elif [ "$tile_hiding_allowed" -eq 1 ] && [ ! -f /var/lib/tvweb/.from-homebrew-ch
   if [ "$mounted" -eq 1 ] && sam_nudge && sam_reports "$first_hidden" '"visible": *false'; then
     echo "$(date): sam read the hidden tiles, without a restart"
   elif [ "$mounted" -eq 1 ]; then
-    # Capture the active foreground app before restarting SAM so we can restore it
-    fg_app=$(luna-send -n 1 -f luna://com.webos.applicationManager/getForegroundAppInfo '{}' 2>/dev/null | sed -n 's/.*"appId": *"\([^"]*\)".*/\1/p')
-
-    if command -v systemctl >/dev/null 2>&1; then
-      killall -9 LunaExecutable >/dev/null 2>&1 || true
-      systemctl kill -s 9 sam.service >/dev/null 2>&1 || systemctl restart --no-block sam >/dev/null 2>&1 || true
-    elif command -v initctl >/dev/null 2>&1; then
-      initctl restart sam >/dev/null 2>&1 || pkill -9 -x sam >/dev/null 2>&1 || true
-    else
-      pkill -9 -x sam >/dev/null 2>&1 || true
-    fi
-
-    # Wait for SAM to become responsive (support BusyBox usleep with fallback)
-    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-      usleep 200000 2>/dev/null || sleep 1
-      if luna-send -n 1 -f luna://com.webos.applicationManager/getForegroundAppInfo '{}' >/dev/null 2>&1; then
-        break
-      fi
-    done
-
-    # If the user was on an HDMI port or any non-home app, immediately restore it
-    # so they are never stranded on the Home screen
-    if [ -n "$fg_app" ] && [ "$fg_app" != "com.webos.app.home" ]; then
-      luna-send -n 1 -f luna://com.webos.applicationManager/launch "{\"id\":\"$fg_app\"}" >/dev/null 2>&1 || true
-    fi
+    sam_restart
   fi
 fi
 
