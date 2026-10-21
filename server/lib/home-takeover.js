@@ -64,6 +64,8 @@ var execFn = execFile;
 var killFn = function (pid) { process.kill(pid, 'SIGTERM'); };
 var blankWanted = function () { return false; };
 var blockFirst = function () { return false; };
+// Whether sam may be restarted where it cannot be made to reread (restartsSam).
+var restartAllowed = function () { return false; };
 
 function init(opts) {
   opts = opts || {};
@@ -80,6 +82,7 @@ function init(opts) {
   if (opts.kill) killFn = opts.kill;
   if (opts.blankAtStart) blankWanted = opts.blankAtStart;
   if (opts.blockFirst) blockFirst = opts.blockFirst;
+  if (opts.restartSam) restartAllowed = opts.restartSam;
 }
 
 function luna(uri, payload, cb) {
@@ -317,8 +320,9 @@ function reread(wantWeb, cb, check) {
       if (ok) return cb(true);
       // webOS 5 and 6 have neither the configd nudge nor the block and
       // release (a CX on 5.5.0-19, a C1 on 6.5.3): there sam reads the files
-      // again only by restarting it.
-      if (!samrescan.restart) return cb(false);
+      // again only by restarting it. webOS 9 and later never restart it for
+      // Glasshouse Home (#366), so a failed reread there gives up instead.
+      if (!restartAllowed() || !samrescan.restart) return cb(false);
       samrescan.restart(check, cb);
     });
   });
@@ -426,8 +430,12 @@ function release(cb) {
   });
 }
 
+// The versions where neither the nudge nor the block and release exist, so sam is restarted.
+function restartsSam(webosVersion) { return /^[56]\./.test(String(webosVersion || '')); }
+
 module.exports = {
   LG_HOME: LG_HOME,
+  restartsSam: restartsSam,
   init: init,
   stage: stage,
   mounted: mounted,
@@ -452,7 +460,9 @@ if (require.main === module && process.argv[2] === '--release') {
   var releaseStateDir = path.join(__dirname, '..');
   rescan.init({ luna: lunaTransport.call });
   remoteKeys.init({ luna: lunaTransport.call, stateDir: releaseStateDir });
-  init({ luna: lunaTransport.call, samrescan: rescan, stageDir: path.join(releaseStateDir, 'home-takeover') });
+  var releaseWebos = require('./util').detectWebosVersion() || '';
+  init({ luna: lunaTransport.call, samrescan: rescan, stageDir: path.join(releaseStateDir, 'home-takeover'),
+         restartSam: function () { return restartsSam(releaseWebos); } });
   remoteKeys.setStarting('', function (keys) {
     function finish(r) {
       if (!keys || !keys.ok) r = { ok: false, error: 'the Home key\'s starting notice could not be cleared' };

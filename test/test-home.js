@@ -726,6 +726,17 @@ step('webOS 6 shows the same limits, so it is offered and restarts sam too', fun
   });
 });
 
+step('webOS 9 and later never restart sam, even where both rereads fail (#366)', function (done) {
+  start(null, { webosVersion: '9.2.2' });
+  tv.rescanAbsent = true;
+  home.enable(function (r) {
+    assert.strictEqual(r.ok, false, 'webOS 9 gives up rather than restart sam');
+    assert.strictEqual(tv.events.indexOf('restart'), -1);
+    assert.ok(!taken());
+    done();
+  });
+});
+
 step('webOS 10 is offered without the setting, with LG\'s Flutter Home stopped and no start-up layout', function (done) {
   start(null, { webosVersion: '10.3.1' });
   home.status(function (st0) {

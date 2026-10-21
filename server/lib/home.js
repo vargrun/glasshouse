@@ -1409,7 +1409,8 @@ function init(opts) {
     exec: opts.exec,
     kill: opts.kill,
     blankAtStart: function () { return startLayoutAvailable() && readConfig().hideLgHomeAtStart === true; },
-    blockFirst: function () { return /^1[01]\./.test(String(webosVersion || '')); }
+    blockFirst: function () { return /^1[01]\./.test(String(webosVersion || '')); },
+    restartSam: function () { return takeover.restartsSam(webosVersion); }
   });
   webosVersion = opts.webosVersion || null;
   serverPort = opts.port === undefined ? 8080 : Number(opts.port);
@@ -1568,7 +1569,9 @@ if (require.main === module && process.argv[2] === '--restore') {
   var restoreStateDir = path.join(__dirname, '..');
   rescan.init({ luna: lunaTransport.call });
   remoteKeys.init({ luna: lunaTransport.call, stateDir: restoreStateDir });
-  init({ luna: lunaTransport.call, samrescan: rescan, stateDir: restoreStateDir, webosVersion: '9',
+  // The TV's own version, so that webOS 5 and 6 restart sam to give LG's Home back.
+  init({ luna: lunaTransport.call, samrescan: rescan, stateDir: restoreStateDir,
+    webosVersion: require('./util').detectWebosVersion() || '9',
     setStarting: remoteKeys.setStarting, setHomeKey: remoteKeys.setHome, homeKeyApp: remoteKeys.homeApp });
   disable(function (r) {
     console.log(r.ok ? 'home: LG\'s Home restored' : 'home: ' + r.error);

@@ -11,6 +11,7 @@ var msg = require('./say').msg;
 var fs = require('fs');
 var dns = require('dns');
 var readTrimmed = require('./util').readTrimmed;
+var detectWebosVersion = require('./util').detectWebosVersion;
 var toInt = require('./util').toInt;
 var lanAddress = require('./util').lanAddress;
 var hexColor = require('./util').hexColor;
@@ -1470,17 +1471,6 @@ function socArchName(raw) {
   var key = String(raw).replace(/^_+|_+$/g, '').toUpperCase();
   if (!key) return null;
   return SOC_ARCH[key] || key;
-}
-
-function detectWebosVersion(sdkVersion) {
-  var raw = readTrimmed('/etc/issue') || readTrimmed('/etc/issue.net') || '';
-  var m = raw.match(/webOS(?:\s+TV)?\s+([\d\.]+)/i);
-  if (m) return m[1];
-  var sf = readTrimmed('/etc/starfish-release') || '';
-  var sm = sf.match(/release\s+([\d\.]+)/i);
-  if (sm) return sm[1];
-  if (sdkVersion) return String(sdkVersion);
-  return null;
 }
 
 function detectHardwareInfo(sdkVersion, cb) {
